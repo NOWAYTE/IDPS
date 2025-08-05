@@ -5,7 +5,7 @@ import config
 class HybridDetector:
     def __init__(self):
         self.sig_detector = SignatureDetector(config.SIGNATURE_DB)
-        self.anomaly_detector = AnomalyDetector(config.ML_MODEL_PATH)
+        self.anomaly_detector = AnomalyDetector()
     
     def analyze_packet(self, packet):
         """Signature-based detection"""
