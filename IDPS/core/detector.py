@@ -24,7 +24,7 @@ class HybridDetector:
             )
             return "signature", sig_id
         
-        anomaly, confidence = self.anomaly_detector.detect_anomaly(packet)
+        anomaly, confidence = self.anomaly_detector.detect(packet)
         if anomaly:
             return "anomaly", confidence
         

@@ -12,12 +12,10 @@ import logging
 
 class AuditLogger:
     def __init__(self):
+        self.current_log_date = datetime.utcnow().date()  # Initialize first
         self.log_queue = []
         self.lock = threading.Lock()
         self.running = True
-        self.logger_thread = threading.Thread(target=self._process_queue)
-        self.logger_thread.daemon = True
-        self.logger_thread.start()
         
         # Create secure log directory
         self.log_dir = os.path.join(BASE_DIR, 'audit_logs')
@@ -27,10 +25,14 @@ class AuditLogger:
         self.encryption_key = self._generate_encryption_key()
         
         # Initialize current log file
-        self.current_log_date = datetime.utcnow().date()
         self.log_file = self._get_log_file_path()
         self._initialize_log_file()
-    
+        
+        # Start the processing thread after everything is initialized
+        self.logger_thread = threading.Thread(target=self._process_queue)
+        self.logger_thread.daemon = True
+        self.logger_thread.start()
+        
     def _generate_encryption_key(self):
         """Generate a secure encryption key (AES-256)"""
         # In production, this should come from a secure key management system
