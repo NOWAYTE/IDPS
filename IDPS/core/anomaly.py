@@ -1,15 +1,41 @@
-import joblib
 import numpy as np
-from .feature_extractor import extract_packet_features
+from ml.predict import AnomalyPredictor
+from utils.feature_extraction import extract_packet_features
+import config
 
 class AnomalyDetector:
-    def __init__(self, model_path):
-        self.model = joblib.load(model_path)
-        self.feature_names = list(config.FEATURE_MAP.keys())
+    def __init__(self):
+        self.predictor = AnomalyPredictor()
+        self.batch_buffer = []
+        self.batch_count = 0
     
-    def detect_anomaly(self, packet):
-        """Detect anomalies using ML model"""
-        features = extract_packet_features(packet, self.feature_names)
-        features_array = np.array([list(features.values())])
-        probability = self.model.predict_proba(features_array)[0][1]
-        return probability > config.ANOMALY_THRESHOLD, probability
+    def detect(self, packet):
+        """Add packet to batch buffer and process when full"""
+        features = extract_packet_features(packet)
+        self.batch_buffer.append(features)
+        
+        if len(self.batch_buffer) >= config.BATCH_SIZE:
+            return self.process_batch()
+        
+        return False, 0.0  # Return placeholder
+    
+    def process_batch(self):
+        """Process accumulated packet features"""
+        features_array = np.array([list(f.values()) for f in self.batch_buffer])
+        probabilities = self.predictor.predict(features_array)
+        
+        results = []
+        for i, prob in enumerate(probabilities):
+            is_anomaly = prob > config.ANOMALY_THRESHOLD
+            results.append((is_anomaly, prob))
+        
+        # Clear buffer and return results
+        self.batch_buffer.clear()
+        self.batch_count += 1
+        return results
+    
+    def flush(self):
+        """Process remaining packets in buffer"""
+        if self.batch_buffer:
+            return self.process_batch()
+        return []

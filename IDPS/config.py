@@ -1,16 +1,13 @@
-SIGNATURE_DB = "data/signatures.csv"
-ML_MODEL_PATH = "ml/models/iot_idps_model.joblib"
-EDGE_INTERFACE = "eth0"
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ML_MODEL = os.path.join(BASE_DIR, 'ml', 'models', 'idps_rf_quantized.pkl')
+SIGNATURE_DB = os.path.join(BASE_DIR, 'data', 'signatures.csv')
+NSL_KDD_DATA = os.path.join(BASE_DIR, 'data', 'nsl_kdd.csv')
+ANOMALY_THRESHOLD = 0.85 
+BATCH_SIZE = 32          
 GDPR_COMPLIANCE = True
-
-FEATURE_MAP = {
-    'protocol': 0, 
-    'src_bytes': 1,
-    'dst_bytes': 2,
-    'duration': 3,
-    'count': 4,
-    'srv_count': 5
+EDGE_INTERFACE = 'eth0'
+PREVENTION_ACTIONS = {
+    'signature': 'block',
+    'anomaly': 'throttle'
 }
-
-SIGNATURE_CONFIDENCE = 0.95
-ANOMALY_THRESHOLD = 0.85

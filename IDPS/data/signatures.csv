@@ -1,0 +1,11 @@
+id,protocol,src_port,pattern
+mqtt_exploit,tcp,1883,4D5154544578706C6F6974              # MQTTExploit
+coap_flood,udp,5683,436F4150466C6F6F64                    # CoAPFlood
+http_brute,tcp,80,485454505F4272757465                    # HTTP_Brute
+dns_tunnel,udp,53,444E535F54756E6E656C                    # DNS_Tunnel
+ftp_overflow,tcp,21,4654505F4F766572666C6F77              # FTP_Overflow
+telnet_hack,tcp,23,54656C6E65745F4861636B                # Telnet_Hack
+smtp_spam,tcp,25,534D54505F5370616D                      # SMTP_Spam
+modbus_attack,tcp,502,4D6F646275735F41747461636B         # Modbus_Attack
+snmp_probe,udp,161,534E4D505F50726F6265                  # SNMP_Probe
+bacnet_scan,udp,47808,4261636E65745F5363616E             # Bacnet_Scan

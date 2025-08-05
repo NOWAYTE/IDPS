@@ -8,7 +8,7 @@ class HybridDetector:
         self.anomaly_detector = AnomalyDetector(config.ML_MODEL_PATH)
     
     def analyze_packet(self, packet):
-        """Signature-based detectio"""
+        """Signature-based detection"""
         sig_match, sig_id = self.sig_detector.match_signature(packet)
         if sig_match:
             return "signature", sig_id
