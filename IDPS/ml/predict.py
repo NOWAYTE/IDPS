@@ -13,4 +13,4 @@ class AnomalyPredictor:
     def predict_single(self, packet):
         """Predict single packet (less efficient)"""
         features = extract_packet_features(packet)
-        return self.predict(np.array([list(features.values())])[0]
+        return self.predict(np.array([list(features.values())])[0])
