@@ -23,7 +23,7 @@ class EdgeNode:
             packet[Ether].dst = anonymize_ip(packet[Ether].dst)
         
         # Detection pipeline
-        detection_type, confidence = self.detector.analyze(packet)
+        detection_type, confidence = self.detector.analyze_packet(packet)
         
         # Record performance
         latency = (time.perf_counter() - start_time) * 1000
