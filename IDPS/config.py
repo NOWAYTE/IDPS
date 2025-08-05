@@ -11,3 +11,9 @@ PREVENTION_ACTIONS = {
     'signature': 'block',
     'anomaly': 'throttle'
 }
+
+# Feature names for packet feature extraction
+FEATURE_NAMES = [
+    'src_bytes', 'protocol_type', 'dst_bytes', 'count', 'srv_count',
+    'device_com_ratio', 'service_mqtt', 'service_http', 'service_other'
+]

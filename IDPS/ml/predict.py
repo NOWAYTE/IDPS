@@ -1,5 +1,6 @@
 import joblib
 import numpy as np
+from config import FEATURE_NAMES
 
 class AnomalyPredictor:
     def __init__(self, model_path=None):
@@ -12,5 +13,6 @@ class AnomalyPredictor:
     
     def predict_single(self, packet):
         """Predict single packet (less efficient)"""
-        features = extract_packet_features(packet)
+        from utils.feature_extraction import extract_packet_features
+        features = extract_packet_features(packet, FEATURE_NAMES)
         return self.predict(np.array([list(features.values())])[0])

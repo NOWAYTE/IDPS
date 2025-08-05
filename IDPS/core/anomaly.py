@@ -11,7 +11,7 @@ class AnomalyDetector:
     
     def detect(self, packet):
         """Add packet to batch buffer and process when full"""
-        features = extract_packet_features(packet)
+        features = extract_packet_features(packet, config.FEATURE_NAMES)
         self.batch_buffer.append(features)
         
         if len(self.batch_buffer) >= config.BATCH_SIZE:
