@@ -9,6 +9,17 @@ class PreventionEngine:
         
         if not ip_src:
             return
+
+        audit_logger.log_event(
+            event_type=detection_type,
+            source_ip=ip_src or "unknown",
+            action=action,
+            confidence=confidence,
+            details={
+                "rule_applied": action,
+                "target": ip_src
+            }
+        )
         
         if action == 'block':
             self.block_ip(ip_src)

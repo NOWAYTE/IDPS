@@ -27,3 +27,5 @@ if __name__ == "__main__":
         node.start()
     except KeyboardInterrupt:
         shutdown_handler(None, None)
+    finally:
+        audit_logger.finalize()
