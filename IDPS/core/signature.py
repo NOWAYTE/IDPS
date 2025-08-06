@@ -4,15 +4,15 @@ from scapy.all import TCP, UDP, Raw, IP
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed to DEBUG to see more detailed logs
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,  # Use INFO in production; change to DEBUG for detailed view
+    format='[%(levelname)s] %(message)s'
 )
 logger = logging.getLogger('SignatureDetector')
 
 class SignatureDetector:
     def __init__(self, signature_db_path: str):
         self.signatures = self.load_signatures(signature_db_path)
-        logger.info(f"Initialized with {len(self.signatures)} signatures")
+        logger.info(f"✅ Loaded {len(self.signatures)} signatures from '{signature_db_path}'")
 
     def load_signatures(self, db_path):
         signatures = []
@@ -29,24 +29,20 @@ class SignatureDetector:
                             'dst_port': int(row['src_port']) if row['src_port'].isdigit() else 0,
                             'pattern': pattern
                         })
-                        logger.debug(f"Loaded signature: {row['id']} - {row.get('attack_name', '')} (Port: {row['src_port']})")
                     except Exception as e:
-                        logger.error(f"Error loading signature {row.get('id', 'unknown')}: {str(e)}")
-                        continue
+                        logger.error(f"❌ Error loading signature {row.get('id', 'unknown')}: {e}")
         except Exception as e:
-            logger.error(f"Failed to load signature database: {str(e)}")
-            
-        logger.info(f"Successfully loaded {len(signatures)} signatures from {db_path}")
+            logger.error(f"❌ Failed to load signature database: {e}")
         return signatures
 
     def match_signature(self, packet):
         if not hasattr(packet, 'haslayer'):
-            logger.warning("Invalid packet format: no layer information")
+            logger.warning("⚠️ Invalid packet format: no layer info")
             return False, None
-            
+
         for sig in self.signatures:
             if self._packet_matches(packet, sig):
-                logger.warning(f"🚨 Signature match: {sig['attack_name']} (ID: {sig['id']})")
+                logger.info(f"🚨 Match: [{sig['attack_name']}] (ID: {sig['id']})")
                 return True, sig['attack_name']
         return False, None
 
@@ -61,44 +57,22 @@ class SignatureDetector:
         return None
 
     def _packet_matches(self, packet, signature):
-        # Check protocol
         proto_layer = self._get_proto_layer(packet, signature['proto'])
         if not proto_layer:
             return False
 
-        # Get packet info for logging
-        pkt_info = {
-            'src': packet[IP].src if packet.haslayer(IP) else 'N/A',
-            'dst': packet[IP].dst if packet.haslayer(IP) else 'N/A',
-            'sport': proto_layer.sport if hasattr(proto_layer, 'sport') else 'N/A',
-            'dport': proto_layer.dport if hasattr(proto_layer, 'dport') else 'N/A',
-            'has_raw': 'Yes' if packet.haslayer(Raw) else 'No'
-        }
-        logger.debug(f"Checking packet: {pkt_info}")
-
-        # Check destination port if defined
         if signature['dst_port'] > 0 and hasattr(proto_layer, 'dport'):
             if proto_layer.dport != signature['dst_port']:
-                logger.debug(f"Port mismatch: {proto_layer.dport} (dport) != {signature['dst_port']} (expected)")
                 return False
 
-        # If pattern is empty, consider it a match if we got this far
         if not signature['pattern']:
-            logger.debug("No pattern to match, port matched")
             return True
-            
-        # Check for raw data if pattern is not empty
+
         if not packet.haslayer(Raw):
-            logger.debug("No Raw layer in packet to match pattern")
             return False
-            
+
         payload = packet[Raw].load
-        logger.debug(f"Payload (hex): {payload.hex()}")
-        logger.debug(f"Looking for pattern: {signature['pattern'].hex()}")
-        
         if signature['pattern'] in payload:
-            logger.warning(f"🚨 Pattern match found in payload!")
             return True
-            
-        logger.debug("Pattern not found in payload")
+
         return False
