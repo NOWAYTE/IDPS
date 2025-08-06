@@ -76,24 +76,28 @@ class SignatureDetector:
         }
         logger.debug(f"Checking packet: {pkt_info}")
 
-        # Check source port if defined
-        if signature['src_port'] > 0 and hasattr(proto_layer, 'sport'):
-            if proto_layer.sport != signature['src_port']:
-                logger.debug(f"Port mismatch: {proto_layer.sport} != {signature['src_port']}")
+        # Check destination port if defined (changed from source port)
+        if signature['src_port'] > 0 and hasattr(proto_layer, 'dport'):
+            if proto_layer.dport != signature['src_port']:
+                logger.debug(f"Port mismatch: {proto_layer.dport} (dport) != {signature['src_port']} (expected)")
                 return False
 
-        # Check raw pattern
-        if packet.haslayer(Raw):
+        # Check raw pattern if signature has one
+        if signature['pattern']:  # Only check if pattern is not empty
+            if not packet.haslayer(Raw):
+                logger.debug("No Raw layer in packet to match pattern")
+                return False
+                
             payload = packet[Raw].load
             logger.debug(f"Payload (hex): {payload.hex()}")
             logger.debug(f"Looking for pattern: {signature['pattern'].hex()}")
             
             if signature['pattern'] in payload:
-                logger.warning(f"Pattern match found in payload!")
+                logger.warning(f"🚨 Pattern match found in payload!")
                 return True
             else:
                 logger.debug("Pattern not found in payload")
-        else:
-            logger.debug("No Raw layer in packet")
-            
-        return False
+                return False
+                
+        # If no pattern to match but port matched
+        return True

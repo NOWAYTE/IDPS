@@ -17,19 +17,37 @@ class AnomalyDetector:
         self.batch_buffer = []
         self.batch_count = 0
         self.packet_index_map = {}
+        self.feature_names = config.FEATURE_NAMES
         logger.info("AnomalyDetector initialized")
+        
+        # Log feature names for verification
+        logger.info(f"Using features: {', '.join(self.feature_names)}")
     
     def detect(self, packet):
         """Add packet to batch buffer and process when full"""
         try:
             # Extract features from packet
-            features = extract_packet_features(packet, config.FEATURE_NAMES)
+            features = extract_packet_features(packet, self.feature_names)
+            if not features:
+                logger.warning("No features extracted from packet")
+                return False, 0.0
+                
+            # Log extracted features for debugging
             logger.debug(f"Extracted features: {features}")
+            
+            # Verify all expected features are present
+            missing_features = [f for f in self.feature_names if f not in features]
+            if missing_features:
+                logger.warning(f"Missing features: {missing_features}")
+                return False, 0.0
             
             # Store packet index for reference
             packet_id = id(packet)
             self.packet_index_map[packet_id] = len(self.batch_buffer)
-            self.batch_buffer.append(features)
+            
+            # Convert features to list in the correct order
+            ordered_features = [features[f] for f in self.feature_names]
+            self.batch_buffer.append(ordered_features)
             
             # Process batch if full
             if len(self.batch_buffer) >= config.BATCH_SIZE:
@@ -49,11 +67,7 @@ class AnomalyDetector:
             
         try:
             # Convert features to numpy array
-            features_array = np.array([
-                [f[name] for name in config.FEATURE_NAMES]
-                for f in self.batch_buffer
-            ])
-            
+            features_array = np.array(self.batch_buffer)
             logger.debug(f"Processing batch of {len(features_array)} packets")
             
             # Get predictions
@@ -73,7 +87,7 @@ class AnomalyDetector:
                 for i, prob in enumerate(probabilities):
                     if prob > config.ANOMALY_THRESHOLD:
                         logger.warning(f"  - Packet {i}: Probability = {prob:.4f}")
-                        logger.debug(f"     Features: {self.batch_buffer[i]}")
+                        logger.debug(f"     Features: {dict(zip(self.feature_names, self.batch_buffer[i]))}")
             
             return is_anomaly, max_prob
             
@@ -90,7 +104,7 @@ class AnomalyDetector:
     def flush(self):
         """Process any remaining packets in the buffer"""
         if not self.batch_buffer:
-            return []
+            return False, 0.0
             
         logger.debug(f"Flushing {len(self.batch_buffer)} packets from buffer")
         return self.process_batch()
