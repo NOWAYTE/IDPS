@@ -26,10 +26,10 @@ class SignatureDetector:
                             'id': row['id'],
                             'attack_name': row.get('attack_name', f"sig_{row['id']}"),
                             'proto': row['protocol'].strip().lower(),
-                            'src_port': int(row['src_port']) if row['src_port'].isdigit() else 0,
+                            'dst_port': int(row['src_port']) if row['src_port'].isdigit() else 0,
                             'pattern': pattern
                         })
-                        logger.debug(f"Loaded signature: {row['id']} - {row.get('attack_name', '')}")
+                        logger.debug(f"Loaded signature: {row['id']} - {row.get('attack_name', '')} (Port: {row['src_port']})")
                     except Exception as e:
                         logger.error(f"Error loading signature {row.get('id', 'unknown')}: {str(e)}")
                         continue
@@ -66,7 +66,7 @@ class SignatureDetector:
         if not proto_layer:
             return False
 
-        # Log packet info for debugging
+        # Get packet info for logging
         pkt_info = {
             'src': packet[IP].src if packet.haslayer(IP) else 'N/A',
             'dst': packet[IP].dst if packet.haslayer(IP) else 'N/A',
@@ -76,28 +76,29 @@ class SignatureDetector:
         }
         logger.debug(f"Checking packet: {pkt_info}")
 
-        # Check destination port if defined (changed from source port)
-        if signature['src_port'] > 0 and hasattr(proto_layer, 'dport'):
-            if proto_layer.dport != signature['src_port']:
-                logger.debug(f"Port mismatch: {proto_layer.dport} (dport) != {signature['src_port']} (expected)")
+        # Check destination port if defined
+        if signature['dst_port'] > 0 and hasattr(proto_layer, 'dport'):
+            if proto_layer.dport != signature['dst_port']:
+                logger.debug(f"Port mismatch: {proto_layer.dport} (dport) != {signature['dst_port']} (expected)")
                 return False
 
-        # Check raw pattern if signature has one
-        if signature['pattern']:  # Only check if pattern is not empty
-            if not packet.haslayer(Raw):
-                logger.debug("No Raw layer in packet to match pattern")
-                return False
-                
-            payload = packet[Raw].load
-            logger.debug(f"Payload (hex): {payload.hex()}")
-            logger.debug(f"Looking for pattern: {signature['pattern'].hex()}")
+        # If pattern is empty, consider it a match if we got this far
+        if not signature['pattern']:
+            logger.debug("No pattern to match, port matched")
+            return True
             
-            if signature['pattern'] in payload:
-                logger.warning(f"🚨 Pattern match found in payload!")
-                return True
-            else:
-                logger.debug("Pattern not found in payload")
-                return False
-                
-        # If no pattern to match but port matched
-        return True
+        # Check for raw data if pattern is not empty
+        if not packet.haslayer(Raw):
+            logger.debug("No Raw layer in packet to match pattern")
+            return False
+            
+        payload = packet[Raw].load
+        logger.debug(f"Payload (hex): {payload.hex()}")
+        logger.debug(f"Looking for pattern: {signature['pattern'].hex()}")
+        
+        if signature['pattern'] in payload:
+            logger.warning(f"🚨 Pattern match found in payload!")
+            return True
+            
+        logger.debug("Pattern not found in payload")
+        return False
