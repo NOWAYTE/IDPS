@@ -51,4 +51,6 @@ class EdgeNode:
     def start(self, interface=None):
         sniff(iface=interface or config.EDGE_INTERFACE, 
               prn=self.packet_handler, 
-              store=0)
+              store=0,
+              timeout=config.SNIFF_TIMEOUT
+              )
