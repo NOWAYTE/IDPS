@@ -23,24 +23,34 @@ def generate_mqtt_traffic(target_ip, count=100):
             send(IP(dst=target_ip)/TCP(dport=MQTT_PORT, flags="PA")/Raw(load=payload), verbose=0)
             time.sleep(random.uniform(0.2, 1.0))
 
-def generate_mqtt_exploit(target_ip):
-    """Generate MQTT exploit traffic"""
+def generate_mqtt_exploit(target_ip, count=5):
+    """Generate MQTT exploit traffic that matches signatures"""
     # MQTT brute force (common credentials)
     credentials = [
         ("admin", "admin"), ("user", "pass"), 
         ("iot", "iot123"), ("root", "toor")
     ]
     
-    for user, passwd in credentials:
-        # Malicious CONNECT with credentials
-        payload = f"\x10{chr(len(user)+len(passwd)+14)}\x00\x04MQTT\x04\x02\x00\x3c\x00\x0a{user}\x00\x08{passwd}".encode()
-        send(IP(dst=target_ip)/TCP(dport=MQTT_PORT, flags="PA")/Raw(load=payload), verbose=0)
+    for _ in range(count):
+        # 1. First send a packet with the exact signature pattern
+        exploit_pattern = b"MQTTExploit"  # Matches the signature pattern
+        send(IP(dst=target_ip)/TCP(dport=MQTT_PORT, flags="PA")/Raw(load=exploit_pattern), verbose=0)
         time.sleep(0.1)
-    
-    # MQTT flood attack
-    for _ in range(500):
-        send(IP(dst=target_ip)/TCP(dport=MQTT_PORT, flags="S"), verbose=0)
-        time.sleep(0.01)
+        
+        # 2. Then send the actual exploit attempt
+        for user, passwd in credentials:
+            # Malicious CONNECT with credentials
+            payload = f"\x10{chr(len(user)+len(passwd)+14)}\x00\x04MQTT\x04\x02\x00\x3c\x00\x0a{user}\x00\x08{passwd}".encode()
+            send(IP(dst=target_ip)/TCP(dport=MQTT_PORT, flags="PA")/Raw(load=payload), verbose=0)
+            time.sleep(0.2)
+            
+            # Add some random MQTT traffic to make it look more realistic
+            if random.random() > 0.5:
+                topic = f"device/{random.randint(1,100)}/sensor"
+                value = random.uniform(18.0, 30.0)
+                payload = f"{topic}:{value:.1f}".encode()
+                send(IP(dst=target_ip)/TCP(dport=MQTT_PORT, flags="PA")/Raw(load=payload), verbose=0)
+                time.sleep(0.1)
 
 def generate_ddos(target_ip):
     """Generate DDoS attack traffic"""
