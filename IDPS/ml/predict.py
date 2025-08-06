@@ -2,6 +2,7 @@ import joblib
 import numpy as np
 import logging
 from config import FEATURE_NAMES, ML_MODEL_PATH
+from sklearn.ensemble import IsolationForest
 
 # Configure logging
 logging.basicConfig(
@@ -15,66 +16,75 @@ class AnomalyPredictor:
         self.model = None
         self._load_model(model_path or ML_MODEL_PATH)
     
+    def _create_default_model(self):
+        """Create a default IsolationForest model as fallback"""
+        logger.warning("Creating default IsolationForest model")
+        return IsolationForest(
+            n_estimators=100,
+            contamination=0.1,
+            random_state=42,
+            n_jobs=-1
+        )
+    
     def _load_model(self, model_path):
         """Load and validate the ML model"""
         try:
-            logger.info(f"Loading model from {model_path}")
+            logger.info(f"Attempting to load model from {model_path}")
             self.model = joblib.load(model_path)
             
-            # Basic model validation
-            if not hasattr(self.model, 'predict_proba'):
-                raise AttributeError("Loaded model does not have predict_proba method")
+            # Basic validation
+            if not hasattr(self.model, 'predict'):
+                raise AttributeError("Loaded model is missing required 'predict' method")
                 
             # Test prediction with dummy data
             test_features = np.zeros((1, len(FEATURE_NAMES)))
             try:
-                _ = self.model.predict_proba(test_features)
+                _ = self.model.predict(test_features)
                 logger.info("Model loaded and validated successfully")
+                return
             except Exception as e:
                 logger.error(f"Model validation failed: {str(e)}")
                 raise
                 
         except Exception as e:
             logger.error(f"Failed to load model: {str(e)}")
-            # Fallback to a simple model if loading fails
-            from sklearn.ensemble import IsolationForest
-            logger.warning("Falling back to default IsolationForest model")
-            self.model = IsolationForest(contamination=0.1, random_state=42)
+            logger.info("Falling back to default model")
+            self.model = self._create_default_model()
     
     def predict(self, features_array):
-        """Predict anomaly probabilities for batch"""
+        """Predict anomaly scores for a batch of features"""
         if self.model is None:
-            logger.error("No model loaded, returning default prediction")
+            logger.error("No model available for prediction")
             return np.zeros(len(features_array))
             
         try:
-            # If using IsolationForest, it returns -1 for anomalies and 1 for normal
-            if hasattr(self.model, 'decision_function'):
+            # Get predictions based on model type
+            if hasattr(self.model, 'decision_function'):  # For IsolationForest
                 scores = self.model.decision_function(features_array)
                 # Convert to probability-like scores between 0 and 1
                 return 1 / (1 + np.exp(-scores))
-            # For models with predict_proba
-            elif hasattr(self.model, 'predict_proba'):
+            elif hasattr(self.model, 'predict_proba'):  # For classifiers
                 return self.model.predict_proba(features_array)[:, 1]
-            else:
+            else:  # Fallback to binary prediction
                 logger.warning("Model doesn't support probability predictions, using binary output")
                 return self.model.predict(features_array).astype(float)
                 
         except Exception as e:
             logger.error(f"Prediction failed: {str(e)}")
-            return np.zeros(features_array.shape[0])
+            return np.zeros(len(features_array))
     
     def predict_single(self, packet):
         """Predict single packet (less efficient)"""
         from utils.feature_extraction import extract_packet_features
+        
         try:
             features = extract_packet_features(packet, FEATURE_NAMES)
             if not features:
                 logger.warning("Failed to extract features from packet")
                 return 0.0
                 
-            # Convert features to array and ensure correct shape
-            feature_array = np.array([list(features.values())])
+            # Convert features to array in correct order
+            feature_array = np.array([[features.get(f, 0) for f in FEATURE_NAMES]])
             if feature_array.shape[1] != len(FEATURE_NAMES):
                 logger.error(f"Feature count mismatch: expected {len(FEATURE_NAMES)}, got {feature_array.shape[1]}")
                 return 0.0
