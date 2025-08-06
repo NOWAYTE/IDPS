@@ -1,5 +1,6 @@
 from scapy.all import IP, TCP, UDP
 import config
+import numpy as np
 
 def extract_packet_features(packet, feature_names):
     features = {name: 0.0 for name in feature_names}
