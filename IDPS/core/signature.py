@@ -1,6 +1,7 @@
 import csv
 import logging
 from scapy.all import TCP, UDP, Raw, IP
+from compliance.audit_logger import audit_logger  # Import the singleton instance
 
 # Configure logging
 logging.basicConfig(
@@ -25,12 +26,14 @@ class SignatureDetector:
                         signatures.append({
                             'id': row['id'],
                             'attack_name': row.get('attack_name', f"sig_{row['id']}"),
+                            'severity': row.get('severity', 'medium'),
                             'proto': row['protocol'].strip().lower(),
                             'dst_port': int(row['src_port']) if row['src_port'].isdigit() else 0,
                             'pattern': pattern
                         })
                     except Exception as e:
                         logger.error(f"❌ Error loading signature {row.get('id', 'unknown')}: {e}")
+                        continue
         except Exception as e:
             logger.error(f"❌ Failed to load signature database: {e}")
         return signatures
@@ -39,11 +42,25 @@ class SignatureDetector:
         if not hasattr(packet, 'haslayer'):
             logger.warning("⚠️ Invalid packet format: no layer info")
             return False, None
-
+            
         for sig in self.signatures:
-            if self._packet_matches(packet, sig):
+            match, reason = self._packet_matches(packet, sig)
+            if match:
+                # Log the detection
+                ip_src = packet[IP].src if IP in packet else "unknown"
+                audit_logger.log_event(
+                    event_type="signature_detection",
+                    source_ip=ip_src,
+                    action="detected",
+                    details={
+                        "signature_id": sig['id'],
+                        "attack_name": sig['attack_name'],
+                        "severity": sig['severity'],
+                        "reason": reason
+                    }
+                )
                 logger.info(f"🚨 Match: [{sig['attack_name']}] (ID: {sig['id']})")
-                return True, sig['attack_name']
+                return True, sig['id']
         return False, None
 
     def _get_proto_layer(self, packet, proto):
@@ -52,27 +69,45 @@ class SignatureDetector:
             return packet[TCP]
         elif proto == 'UDP' and packet.haslayer(UDP):
             return packet[UDP]
-        elif proto == 'IP' and packet.haslayer(IP):
-            return packet[IP]
         return None
 
     def _packet_matches(self, packet, signature):
         proto_layer = self._get_proto_layer(packet, signature['proto'])
         if not proto_layer:
-            return False
+            return False, "Protocol mismatch"
 
+        # Get packet info for logging
+        pkt_info = {
+            'src': packet[IP].src if packet.haslayer(IP) else 'N/A',
+            'dst': packet[IP].dst if packet.haslayer(IP) else 'N/A',
+            'sport': proto_layer.sport if hasattr(proto_layer, 'sport') else 'N/A',
+            'dport': proto_layer.dport if hasattr(proto_layer, 'dport') else 'N/A',
+            'has_raw': 'Yes' if packet.haslayer(Raw) else 'No'
+        }
+        logger.debug(f"Checking packet: {pkt_info}")
+
+        # Check destination port if defined
         if signature['dst_port'] > 0 and hasattr(proto_layer, 'dport'):
             if proto_layer.dport != signature['dst_port']:
-                return False
+                logger.debug(f"Port mismatch: {proto_layer.dport} (dport) != {signature['dst_port']} (expected)")
+                return False, "Port mismatch"
 
+        # If no pattern to match, consider it a match if we got this far
         if not signature['pattern']:
-            return True
-
+            logger.debug("No pattern to match, port matched")
+            return True, "Port matched"
+            
+        # Check for raw data if pattern exists
         if not packet.haslayer(Raw):
-            return False
-
+            logger.debug("No Raw layer in packet to match pattern")
+            return False, "No payload to inspect"
+            
         payload = packet[Raw].load
+        logger.debug(f"Payload (hex): {payload.hex()}")
+        
         if signature['pattern'] in payload:
-            return True
-
-        return False
+            logger.warning(f"🚨 Pattern match found: {signature['pattern'].hex()} for {signature['attack_name']}")
+            return True, f"Pattern matched: {signature['pattern'].hex()[:16]}..."
+            
+        logger.debug("Pattern not found in payload")
+        return False, "Pattern not found"
