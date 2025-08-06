@@ -1,14 +1,19 @@
 import csv
 import logging
+import importlib
 from scapy.all import TCP, UDP, Raw, IP
-from compliance.audit_logger import audit_logger  # Import the singleton instance
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,  # Use INFO in production; change to DEBUG for detailed view
+    level=logging.INFO,
     format='[%(levelname)s] %(message)s'
 )
 logger = logging.getLogger('SignatureDetector')
+
+# Lazy-loaded audit logger
+def get_audit_logger():
+    from compliance.audit_logger import audit_logger
+    return audit_logger
 
 class SignatureDetector:
     def __init__(self, signature_db_path: str):
@@ -46,21 +51,27 @@ class SignatureDetector:
         for sig in self.signatures:
             match, reason = self._packet_matches(packet, sig)
             if match:
-                # Log the detection
-                ip_src = packet[IP].src if IP in packet else "unknown"
-                audit_logger.log_event(
-                    event_type="signature_detection",
-                    source_ip=ip_src,
-                    action="detected",
-                    details={
-                        "signature_id": sig['id'],
-                        "attack_name": sig['attack_name'],
-                        "severity": sig['severity'],
-                        "reason": reason
-                    }
-                )
-                logger.info(f"🚨 Match: [{sig['attack_name']}] (ID: {sig['id']})")
-                return True, sig['id']
+                try:
+                    # Lazy load the audit logger only when needed
+                    audit_logger = get_audit_logger()
+                    ip_src = packet[IP].src if IP in packet else "unknown"
+                    audit_logger.log_event(
+                        event_type="signature_detection",
+                        source_ip=ip_src,
+                        action="detected",
+                        details={
+                            "signature_id": sig['id'],
+                            "attack_name": sig['attack_name'],
+                            "severity": sig['severity'],
+                            "reason": reason
+                        }
+                    )
+                    logger.info(f"🚨 Match: [{sig['attack_name']}] (ID: {sig['id']})")
+                    return True, sig['id']
+                except Exception as e:
+                    logger.error(f"❌ Error logging signature detection: {e}")
+                    # Still return the match even if logging fails
+                    return True, sig['id']
         return False, None
 
     def _get_proto_layer(self, packet, proto):
