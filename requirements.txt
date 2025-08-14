@@ -1,0 +1,25 @@
+# Core Dependencies
+scapy==2.5.0              # Packet manipulation and network analysis
+numpy>=1.21.0,<2.0.0      # Numerical operations
+pandas>=1.3.0,<2.0.0      # Data manipulation and analysis
+scikit-learn>=1.0.0,<2.0.0 # Machine learning models and utilities
+joblib>=1.1.0,<2.0.0      # Model persistence
+cryptography>=3.4.0,<4.0.0 # Encryption and security
+psutil>=5.9.0,<6.0.0      # System monitoring
+python-dotenv>=0.19.0,<1.0.0 # Environment variable management
+
+# Network Simulation (Optional)
+mininet>=2.3.0,<3.0.0      # Network emulation (for simulations)
+
+# Development Dependencies
+pytest>=6.2.5,<7.0.0      # Testing framework
+pytest-cov>=2.12.0,<3.0.0  # Test coverage
+black>=21.12b0,<22.0.0     # Code formatting
+flake8>=4.0.0,<5.0.0       # Linting
+mypy>=0.930,<1.0.0        # Static type checking
+
+# Documentation
+sphinx>=4.2.0,<5.0.0      # Documentation generation
+sphinx-rtd-theme>=1.0.0,<2.0.0  # ReadTheDocs theme
+
+# Note: Python 3.8+ is required
