@@ -26,34 +26,32 @@ class AnomalyDetector:
     def detect(self, packet):
         """Add packet to batch buffer and process when full"""
         try:
-            # Extract features from packet
+        
             features = extract_packet_features(packet, self.feature_names)
             if not features:
                 logger.warning("No features extracted from packet")
                 return False, 0.0
                 
-            # Log extracted features for debugging
             logger.debug(f"Extracted features: {features}")
             
-            # Verify all expected features are present
+           
             missing_features = [f for f in self.feature_names if f not in features]
             if missing_features:
                 logger.warning(f"Missing features: {missing_features}")
                 return False, 0.0
             
-            # Store packet index for reference
+            
             packet_id = id(packet)
             self.packet_index_map[packet_id] = len(self.batch_buffer)
             
-            # Convert features to list in the correct order
+            
             ordered_features = [features[f] for f in self.feature_names]
             self.batch_buffer.append(ordered_features)
             
-            # Process batch if full
             if len(self.batch_buffer) >= config.BATCH_SIZE:
                 return self.process_batch()
             
-            return False, 0.0  # Return placeholder
+            return False, 0.0  
             
         except Exception as e:
             logger.error(f"Error in detect: {str(e)}", exc_info=True)
@@ -66,22 +64,20 @@ class AnomalyDetector:
             return False, 0.0
             
         try:
-            # Convert features to numpy array
             features_array = np.array(self.batch_buffer)
             logger.debug(f"Processing batch of {len(features_array)} packets")
             
-            # Get predictions
+           
             probabilities = self.predictor.predict(features_array)
             
-            # Find the highest probability in the batch
-            max_prob = float(np.max(probabilities))
+            
             is_anomaly = max_prob > config.ANOMALY_THRESHOLD
             
             logger.debug(f"Batch results - Max probability: {max_prob:.4f}, "
                         f"Threshold: {config.ANOMALY_THRESHOLD}, "
                         f"Anomaly: {is_anomaly}")
             
-            # Log detailed info for anomalous batches
+            
             if is_anomaly:
                 logger.warning(f" Anomaly detected! Probability: {max_prob:.4f}")
                 for i, prob in enumerate(probabilities):
@@ -96,7 +92,6 @@ class AnomalyDetector:
             return False, 0.0
             
         finally:
-            # Clear buffer
             self.batch_buffer.clear()
             self.packet_index_map.clear()
             self.batch_count += 1
