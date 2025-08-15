@@ -4,54 +4,56 @@ SCENARIOS = {
         "duration": 300,  # 5 minutes
         "attacks": [],
         "benign_traffic": [
-            {"device": "thermostat", "type": "normal"},
-            {"device": "security_cam", "type": "normal"},
-            {"device": "smart_lock", "type": "normal"},
-            {"device": "health_monitor", "type": "normal"}
+            {"device": "therm", "type": "normal"},
+            {"device": "cam", "type": "normal"},
+            {"device": "lock", "type": "normal"},
+            {"device": "health", "type": "normal"}
         ]
     },
     "ddos_attack": {
         "name": "DDoS Attack Simulation",
         "duration": 180,  # 3 minutes
         "attacks": [
-            {"device": "malicious_device", "type": "ddos"}
+            {"device": "malicious", "type": "ddos"}
         ],
         "benign_traffic": [
-            {"device": "thermostat", "type": "normal"}
+            {"device": "therm", "type": "normal"}
         ]
     },
     "reconnaissance": {
         "name": "Network Reconnaissance",
         "duration": 120,
         "attacks": [
-            {"device": "malicious_device", "type": "portscan"}
+            {"device": "malicious", "type": "portscan"}
         ],
         "benign_traffic": [
-            {"device": "security_cam", "type": "normal"}
+            {"device": "cam", "type": "normal"}
         ]
     },
     "iot_exploit": {
         "name": "IoT Protocol Exploit",
         "duration": 150,
         "attacks": [
-            {"device": "malicious_device", "type": "mqtt"}
+            {"device": "malicious", "type": "mqtt"}
         ],
         "benign_traffic": [
-            {"device": "thermostat", "type": "normal"},
-            {"device": "smart_lock", "type": "normal"}
+            {"device": "therm", "type": "normal"},
+            {"device": "lock", "type": "normal"}
         ]
     },
     "mixed_threats": {
         "name": "Mixed Threat Scenario",
         "duration": 240,
         "attacks": [
-            {"device": "malicious_device", "type": "ddos"},
-            {"device": "malicious_device", "type": "portscan"},
-            {"device": "malicious_device", "type": "mqtt"}
+            {"device": "malicious", "type": "ddos"},
+            {"device": "malicious", "type": "portscan"},
+            {"device": "malicious", "type": "mqtt"}
         ],
         "benign_traffic": [
-            {"device": "thermostat", "type": "normal"},
-            {"device": "health_monitor", "type": "normal"}
+            {"device": "therm", "type": "normal"},
+            {"device": "cam", "type": "normal"},
+            {"device": "lock", "type": "normal"},
+            {"device": "health", "type": "normal"}
         ]
     }
 }
