@@ -39,9 +39,12 @@ class CustomHost(Host):
 
 class IoTTopo(Topo):
     """IoT Network Topology with custom host class"""
-    def __init__(self):
+    def __init__(self, **opts):
         """Create custom topology with shorter interface names"""
-        Topo.__init__(self, host=CustomHost)
+        # Initialize topology with default options
+        Topo.__init__(self, **opts)
+        self.host = CustomHost  # Set custom host class
+        self.build()
 
     def build(self):
         """Build the IoT network topology"""
@@ -58,14 +61,14 @@ class IoTTopo(Topo):
         # Add devices to network
         hosts = {}
         for name, ip in devices:
-            hosts[name] = self.addHost(name, ip=ip)
+            hosts[name] = self.addHost(name, ip=ip, cls=CustomHost)
         
         # Create switches
         s1 = self.addSwitch('s1')
         s2 = self.addSwitch('s2')
         
         # Create cloud server with shorter name
-        cloud = self.addHost('cloud', ip='10.0.0.1/24')
+        cloud = self.addHost('cloud', ip='10.0.0.1/24', cls=CustomHost)
         
         # Add links with explicit port numbers and names
         for i, name in enumerate(['therm', 'cam', 'lock', 'monitor', 'malicious']):
