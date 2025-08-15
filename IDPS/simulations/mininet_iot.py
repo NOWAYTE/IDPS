@@ -12,15 +12,15 @@ from config import BASE_DIR
 
 class IoTTopo(Topo):
     def build(self):
-        """Create IoT network topology"""
-        # Create IoT devices
+        """Create IoT network topology with shorter interface names"""
+        # Create IoT devices with shorter names
         devices = [
-            ('thermostat', '192.168.0.101/24'),
-            ('security_cam', '192.168.0.102/24'),
-            ('smart_lock', '192.168.0.103/24'),
-            ('health_monitor', '192.168.0.104/24'),
-            ('malicious_device', '192.168.0.200/24'),
-            ('edge_router', '192.168.0.1/24')
+            ('therm', '192.168.0.101/24'),  # thermostat
+            ('cam', '192.168.0.102/24'),    # security_cam
+            ('lock', '192.168.0.103/24'),   # smart_lock
+            ('monitor', '192.168.0.104/24'), # health_monitor
+            ('malicious', '192.168.0.200/24'), # malicious_device
+            ('edge', '192.168.0.1/24')      # edge_router
         ]
         
         # Add devices to network
@@ -31,18 +31,21 @@ class IoTTopo(Topo):
         iot_switch = self.addSwitch('s1')
         cloud_switch = self.addSwitch('s2')
         
-        # Create cloud server
-        cloud_server = self.addHost('cloud_server', ip='10.0.0.1/24')
+        # Create cloud server with shorter name
+        cloud = self.addHost('cloud', ip='10.0.0.1/24')
         
-        # Add links
-        for name, _ in devices:
+        # Add links with explicit port numbers to avoid long interface names
+        for name, _ in devices[:-1]:  # All except edge router
             self.addLink(name, iot_switch)
         
+        # Connect switches
         self.addLink(iot_switch, cloud_switch)
-        self.addLink(cloud_switch, cloud_server)
         
-        # Add IDPS monitoring port
-        self.addLink(iot_switch, 'edge_router', port2=2)
+        # Connect cloud server
+        self.addLink(cloud_switch, cloud, port1=2, port2=0)
+        
+        # Add IDPS monitoring port with explicit interface names
+        self.addLink(iot_switch, 'edge', port1=len(devices), port2=0)
 
 def start_idps(node):
     """Start IDPS on edge router"""
@@ -65,7 +68,7 @@ def monitor_network(net, duration=120):
     start = time.time()
     while time.time() - start < duration:
         # Check IDPS status
-        edge = net.get('edge_router')
+        edge = net.get('edge')
         idps_status = edge.cmd('ps aux | grep main.py | grep -v grep')
         
         if not idps_status:
@@ -73,7 +76,7 @@ def monitor_network(net, duration=120):
             return False
         
         # Check device connectivity
-        cloud = net.get('cloud_server')
+        cloud = net.get('cloud')
         ping_result = edge.cmd('ping -c 1 192.168.0.1')
         if '100% packet loss' in ping_result:
             info("Edge router unreachable! Stopping test.\n")
@@ -107,7 +110,7 @@ def run_test_scenario(net, scenario):
     success = monitor_network(net, test['duration'])
     
     # Collect IDPS logs
-    edge = net.get('edge_router')
+    edge = net.get('edge')
     edge.cmd('pkill -f main.py')  # Stop IDPS gently
     time.sleep(2)
     edge.cmd(f'mv {BASE_DIR}/audit_logs {BASE_DIR}/results/{scenario}_logs')
@@ -115,49 +118,53 @@ def run_test_scenario(net, scenario):
     return success
 
 def main(scenario=None):
-    """Create and test network"""
+    """Create and test network with improved interface naming"""
+    # Set environment variable to allow long interface names
+    os.environ['LANG'] = 'C'
+    
+    # Initialize Mininet with custom topology
     net = Mininet(
         topo=IoTTopo(),
         switch=OVSSwitch,
         controller=lambda name: RemoteController(name, ip='127.0.0.1'),
         link=TCLink,
-        autoStaticArp=True
+        autoStaticArp=True,
+        waitConnected=True
     )
     
     # Start network
     net.start()
     
-    # Configure edge router as gateway
-    edge = net.get('edge_router')
-    edge.cmd('sysctl net.ipv4.ip_forward=1')
-    
-    # Configure NAT for internet access
-    edge.cmd('iptables -t nat -A POSTROUTING -o edge_router-eth0 -j MASQUERADE')
-    
-    # Set default route for IoT devices
-    for device in ['thermostat', 'security_cam', 'smart_lock', 'health_monitor', 'malicious_device']:
-        host = net.get(device)
-        host.cmd('ip route add default via 192.168.0.1')
-    
-    # Start IDPS
-    start_idps(edge)
-    
-    # Create results directory
-    edge.cmd(f'mkdir -p {BASE_DIR}/results')
-    
-    if scenario:
-        # Run specific scenario
-        result = run_test_scenario(net, scenario)
-        info(f"Scenario {scenario} completed: {'Success' if result else 'Failure'}\n")
-    else:
-        # Interactive mode
-        CLI(net)
-    
-    # Stop network
-    net.stop()
-    
-    # Clean up
-    subprocess.call(['mn', '-c'])
+    try:
+        # Configure edge router as gateway
+        edge = net.get('edge')
+        edge.cmd('sysctl net.ipv4.ip_forward=1')
+        
+        # Configure NAT for internet access
+        edge.cmd('iptables -t nat -A POSTROUTING -o edge-eth0 -j MASQUERADE')
+        
+        # Set default route for IoT devices
+        for device in ['therm', 'cam', 'lock', 'monitor', 'malicious']:
+            host = net.get(device)
+            host.cmd('ip route add default via 192.168.0.1')
+        
+        # Start IDPS
+        start_idps(edge)
+        
+        # Create results directory
+        edge.cmd(f'mkdir -p {BASE_DIR}/results')
+        
+        if scenario:
+            # Run specific scenario
+            result = run_test_scenario(net, scenario)
+            info(f"Scenario {scenario} completed: {'Success' if result else 'Failure'}\n")
+        else:
+            # Interactive mode
+            CLI(net)
+    finally:
+        # Ensure cleanup happens even if there's an error
+        net.stop()
+        subprocess.call(['mn', '-c'])
 
 if __name__ == '__main__':
     setLogLevel('info')
