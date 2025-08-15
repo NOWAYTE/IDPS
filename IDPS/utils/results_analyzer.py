@@ -2,6 +2,9 @@ import os
 import json
 import pandas as pd
 from compliance.audit_verifier import AuditVerifier
+import sys
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 from config import BASE_DIR
 
 def analyze_scenario(scenario):
