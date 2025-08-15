@@ -37,28 +37,28 @@ def run_scenario(scenario):
     print(f"{'='*50}")
     
     try:
-        # Run the scenario
-        cmd = f"sudo python3 {os.path.join('simulations', 'mininet_iot.py')} {scenario}"
-        process = subprocess.Popen(
-            cmd,
-            shell=True,
-            cwd=project_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,  # Line buffered
-            universal_newlines=True
-        )
-        
-        # Log the output in real-time
+        # Create log directory first
         log_dir = os.path.join(BASE_DIR, 'results', f'{scenario}_logs')
         os.makedirs(log_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         log_file = os.path.join(log_dir, f'{scenario}_{timestamp}.log')
         
-        start_time = time.time()
-        last_update = 0
+        # Run the scenario with both stdout and stderr redirected
+        cmd = f"sudo python3 {os.path.join('simulations', 'mininet_iot.py')} {scenario} 2>&1"
+        process = subprocess.Popen(
+            cmd,
+            shell=True,
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr with stdout
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
         
+        start_time = time.time()
+        
+        # Capture and log all output in real-time
         with open(log_file, 'w') as f_log:
             while True:
                 output = process.stdout.readline()
@@ -69,37 +69,33 @@ def run_scenario(scenario):
                     f_log.write(output)
                     f_log.flush()
                     
-                    # Print formatted output for DDoS scenario
-                    if 'DDoS' in scenario:
-                        current_time = time.time() - start_time
-                        if 'IDPS ALERT' in output:
-                            print(f"[{int(current_time)//60:02d}:{int(current_time)%60:02d}] {output.strip()}")
-                        elif 'ACTION:' in output:
-                            print(f"[{int(current_time)//60:02d}:{int(current_time)%60:02d}] {output.strip()}")
-                        elif current_time - last_update >= 30:  # Print stats every 30 seconds
-                            print(f"[{int(current_time)//60:02d}:{int(current_time)%60:02d}] STATS: {random.randint(20000, 30000)} pkts processed | {random.uniform(95.0, 99.9):.1f}% detection")
-                            last_update = current_time
-                    else:
-                        print(output.strip())
-                
-                # Check for stderr
-                err = process.stderr.readline()
-                if err:
-                    print(f"[ERROR] {err.strip()}", file=sys.stderr)
-                    f_log.write(f"[ERROR] {err}\n")
+                    # Print to console with timestamp
+                    elapsed = time.time() - start_time
+                    mins = int(elapsed) // 60
+                    secs = int(elapsed) % 60
+                    print(f"[{mins:02d}:{secs:02d}] {output.strip()}")
         
-        # Final status
-        if process.returncode != 0:
-            print(f"[!] Scenario {scenario} failed with return code {process.returncode}")
+        # Check return code
+        return_code = process.poll()
+        if return_code != 0:
+            print(f"[!] Scenario {scenario} failed with return code {return_code}")
+            # Show last 10 lines of log for debugging
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+                print("\nLast 10 lines of log:")
+                for line in lines[-10:]:
+                    print(f"  {line.strip()}")
             return False
             
-        # Print completion message
-        elapsed = time.time() - start_time
-        print(f"[{int(elapsed)//60:02d}:{int(elapsed)%60:02d}] Scenario completed - Cleanup initiated")
+        print(f"[{int(time.time() - start_time)//60:02d}:{int(time.time() - start_time)%60:02d}] Scenario completed successfully")
         return True
         
     except Exception as e:
-        print(f"[!] Error running scenario {scenario}: {e}")
+        print(f"[!] Error running scenario {scenario}: {str(e)}")
+        if 'log_file' in locals() and os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                print("\nLog file contents:")
+                print(f.read())
         return False
 
 def generate_report(scenarios):
