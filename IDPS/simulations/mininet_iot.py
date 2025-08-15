@@ -64,12 +64,12 @@ def start_ovs_service():
         return False
 
 class IoTTopo(Topo):
-    """Simplified IoT Network Topology"""
+    """Simplified IoT Network Topology with short interface names"""
     def build(self):
-        # Create IoT devices
+        # Use shorter hostnames to avoid interface name issues
         devices = [
-            ('thermostat', '192.168.0.101/24'),
-            ('edge_router', '192.168.0.1/24')
+            ('therm', '192.168.0.101/24'),  # thermostat
+            ('edge', '192.168.0.1/24')      # edge_router
         ]
         
         # Add devices to network
@@ -80,9 +80,9 @@ class IoTTopo(Topo):
         # Create switch
         s1 = self.addSwitch('s1')
         
-        # Add links
-        for name in ['thermostat', 'edge_router']:
-            self.addLink(hosts[name], s1)
+        # Add links with explicit port numbers
+        self.addLink(hosts['therm'], s1, port1=1, port2=2)
+        self.addLink(hosts['edge'], s1, port1=1, port2=3)
 
 def main(scenario=None):
     """Main function with enhanced OVS handling"""
@@ -114,15 +114,15 @@ def main(scenario=None):
         
         # Simple ping test
         info("*** Testing connectivity\n")
-        edge = net.get('edge_router')
-        thermostat = net.get('thermostat')
+        edge = net.get('edge')
+        therm = net.get('therm')
         
         # Configure basic networking
         edge.cmd('sysctl -w net.ipv4.ip_forward=1')
-        thermostat.cmd('ip route add default via 192.168.0.1')
+        therm.cmd('ip route add default via 192.168.0.1')
         
         # Test connectivity
-        ping_result = thermostat.cmd('ping -c 1 192.168.0.1')
+        ping_result = therm.cmd('ping -c 1 192.168.0.1')
         
         if '1 received' not in ping_result:
             error("*** Basic connectivity test failed!\n")
