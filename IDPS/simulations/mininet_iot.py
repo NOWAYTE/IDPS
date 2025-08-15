@@ -9,7 +9,7 @@ import time
 import os
 import sys
 import re
-from config import BASE_DIR
+from idps.config import BASE_DIR
 
 class CustomHost(Host):
     """Custom host with shorter interface names"""
