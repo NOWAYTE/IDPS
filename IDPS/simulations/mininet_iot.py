@@ -64,12 +64,16 @@ def start_ovs_service():
         return False
 
 class IoTTopo(Topo):
-    """Simplified IoT Network Topology with short interface names"""
+    """IoT Network Topology with all required devices for testing"""
     def build(self):
-        # Use shorter hostnames to avoid interface name issues
+        # Define all devices with their IPs
         devices = [
-            ('therm', '192.168.0.101/24'),  # thermostat
-            ('edge', '192.168.0.1/24')      # edge_router
+            ('therm', '192.168.0.101/24'),     # thermostat
+            ('cam', '192.168.0.102/24'),       # security_cam
+            ('lock', '192.168.0.103/24'),      # smart_lock
+            ('health', '192.168.0.104/24'),    # health_monitor
+            ('malicious', '192.168.0.200/24'), # malicious_device
+            ('edge', '192.168.0.1/24')         # edge_router
         ]
         
         # Add devices to network
@@ -80,12 +84,62 @@ class IoTTopo(Topo):
         # Create switch
         s1 = self.addSwitch('s1')
         
-        # Add links with explicit port numbers
-        self.addLink(hosts['therm'], s1, port1=1, port2=2)
-        self.addLink(hosts['edge'], s1, port1=1, port2=3)
+        # Add all devices to switch
+        for name in hosts.keys():
+            self.addLink(hosts[name], s1)
+
+def run_attack(host, attack_type):
+    """Run specific attack from a host"""
+    if attack_type == 'ddos':
+        host.cmd('hping3 --flood --rand-source 192.168.0.1 &')
+    elif attack_type == 'portscan':
+        host.cmd('nmap -T4 -A 192.168.0.1 &')
+    elif attack_type == 'mqtt':
+        host.cmd('python simulations/attack_generators.py --attack mqtt &')
+    info(f"Started {attack_type} attack from {host.name}\n")
+
+def run_test_scenario(net, scenario):
+    """Run predefined test scenario"""
+    from test_scenarios import SCENARIOS
+    
+    if scenario not in SCENARIOS:
+        error(f"Unknown scenario: {scenario}\n")
+        return False
+    
+    test = SCENARIOS[scenario]
+    info(f"=== Starting scenario: {test['name']} ===\n")
+    
+    try:
+        # Start attacks
+        for attack in test['attacks']:
+            try:
+                device = net.get(attack['device'].split('_')[0])  # Convert 'malicious_device' to 'malicious'
+                run_attack(device, attack['type'])
+            except Exception as e:
+                error(f"Failed to start attack {attack['type']}: {e}\n")
+        
+        # Start benign traffic
+        for traffic in test['benign_traffic']:
+            try:
+                device = net.get(traffic['device'].split('_')[0])
+                device.cmd(f'python simulations/attack_generators.py --traffic {traffic["type"]} &')
+            except Exception as e:
+                error(f"Failed to start traffic {traffic['type']}: {e}\n")
+        
+        # Run for scenario duration
+        info(f"\n=== Running scenario for {test['duration']} seconds ===\n")
+        time.sleep(test['duration'])
+        return True
+        
+    except KeyboardInterrupt:
+        info("\n=== Scenario interrupted by user ===\n")
+        return True
+    except Exception as e:
+        error(f"Error in scenario: {e}\n")
+        return False
 
 def main(scenario=None):
-    """Main function with enhanced OVS handling"""
+    """Main function with enhanced testing capabilities"""
     setLogLevel('info')
     
     # Ensure OVS service is running
@@ -112,27 +166,22 @@ def main(scenario=None):
         info("*** Starting network\n")
         net.start()
         
-        # Simple ping test
-        info("*** Testing connectivity\n")
+        # Configure edge router as gateway
         edge = net.get('edge')
-        therm = net.get('therm')
-        
-        # Configure basic networking
         edge.cmd('sysctl -w net.ipv4.ip_forward=1')
-        therm.cmd('ip route add default via 192.168.0.1')
         
-        # Test connectivity
-        ping_result = therm.cmd('ping -c 1 192.168.0.1')
+        # Set default routes for all devices
+        for host in net.hosts:
+            if host.name != 'edge':
+                host.cmd(f'ip route add default via 192.168.0.1')
         
-        if '1 received' not in ping_result:
-            error("*** Basic connectivity test failed!\n")
-            error(f"Ping result: {ping_result}\n")
-            return 1
+        # Run specific scenario or enter CLI
+        if scenario:
+            run_test_scenario(net, scenario)
+        else:
+            info("\n=== Starting Mininet CLI (type 'exit' to quit) ===\n")
+            CLI(net)
         
-        info("*** Connectivity test passed\n")
-        
-        # If we reached here, basic network works
-        info("*** Test completed successfully\n")
         return 0
         
     except Exception as e:
