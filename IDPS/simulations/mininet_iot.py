@@ -29,12 +29,19 @@ def cleanup_network():
         'sudo ip link del s1-eth1 >/dev/null 2>&1 || true',
         'sudo ip link del s1-eth2 >/dev/null 2>&1 || true',
         'sudo ip netns del edge_router >/dev/null 2>&1 || true',
-        'sudo ip netns del thermostat >/dev/null 2>&1 || true'
+        'sudo ip netns del thermostat >/dev/null 2>&1 || true',
+        'sudo ovs-vsctl --if-exists del-br s1',
+        'sudo ovs-vsctl --if-exists del-manager',
+        'sudo service openvswitch-switch restart',
+        'sleep 2'  # Give OVS time to restart
     ]
     
     for cmd in commands:
-        subprocess.run(cmd, shell=True)
-    time.sleep(1)
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[!] Warning during cleanup: {e}")
+    time.sleep(2)  # Additional delay to ensure cleanup completes
 
 def start_ovs_service():
     """Ensure Open vSwitch service is running"""

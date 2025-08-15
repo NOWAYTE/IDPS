@@ -30,11 +30,42 @@ TEST_SCENARIOS = [
     'mixed_threats'
 ]
 
+def cleanup_between_scenarios():
+    """Ensure clean environment between test scenarios"""
+    print("\n[+] Cleaning up between scenarios...")
+    
+    # Import cleanup function from mininet_iot
+    from mininet_iot import cleanup_network
+    
+    # Run cleanup
+    cleanup_network()
+    
+    # Additional cleanup commands
+    cleanup_cmds = [
+        'sudo pkill -f "python.*mininet"',
+        'sudo pkill -f "ovs-vswitchd"',
+        'sudo pkill -f "ovsdb-server"',
+        'sudo rm -rf /var/run/openvswitch/*',
+        'sudo service openvswitch-switch restart',
+    ]
+    
+    for cmd in cleanup_cmds:
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[!] Warning during cleanup: {e}")
+    
+    # Give the system a moment to stabilize
+    time.sleep(5)
+
 def run_scenario(scenario):
     """Run a single test scenario and return execution status"""
     print(f"\n{'='*50}")
     print(f"Starting scenario: {scenario}")
     print(f"{'='*50}")
+    
+    # Clean up before starting the scenario
+    cleanup_between_scenarios()
     
     try:
         # Create log directory first
@@ -126,6 +157,9 @@ def main():
     print("Starting IDPS Test Suite")
     print("="*50)
     
+    # Initial cleanup
+    cleanup_between_scenarios()
+    
     # Ensure results directory exists
     results_dir = os.path.join(BASE_DIR, 'results')
     os.makedirs(results_dir, exist_ok=True)
@@ -142,10 +176,8 @@ def main():
             "duration_seconds": round(duration, 2)
         }
         
-        # Brief pause between scenarios
-        if scenario != TEST_SCENARIOS[-1]:
-            print("\nPreparing next scenario...")
-            time.sleep(5)
+        # Clean up after each scenario
+        cleanup_between_scenarios()
     
     # Generate final report
     print("\nGenerating test report...")
