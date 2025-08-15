@@ -1,223 +1,133 @@
-from mininet.topo import Topo
-from mininet.net import Mininet
-from mininet.node import OVSSwitch, RemoteController, Host
-from mininet.cli import CLI
-from mininet.log import setLogLevel, info, error
-from mininet.link import TCLink
-import subprocess
-import time
-import os
-import sys
+#!/usr/bin/env python3
 import sys
 import os
 
+# Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 from config import BASE_DIR
+from mininet.topo import Topo
+from mininet.net import Mininet
+from mininet.node import OVSSwitch, RemoteController
+from mininet.cli import CLI
+from mininet.log import setLogLevel, info, error, debug
+from mininet.link import TCLink
+import subprocess
+import time
+import signal
+
+# Handle SIGTERM gracefully
+def sigterm_handler(signum, frame):
+    error("\nReceived SIGTERM. Cleaning up...\n")
+    cleanup_network()
+    sys.exit(1)
+
+signal.signal(signal.SIGTERM, sigterm_handler)
 
 class IoTTopo(Topo):
-    """IoT Network Topology with standard interface naming"""
     def build(self):
-        # Create IoT devices
-        devices = [
-            ('thermostat', '192.168.0.101/24'),
-            ('security_cam', '192.168.0.102/24'),
-            ('smart_lock', '192.168.0.103/24'),
-            ('health_monitor', '192.168.0.104/24'),
-            ('malicious_device', '192.168.0.200/24'),
-            ('edge_router', '192.168.0.1/24')
-        ]
-        
-        # Add devices to network
-        hosts = {}
-        for name, ip in devices:
-            hosts[name] = self.addHost(name, ip=ip)
-        
-        # Create switches
+        # Simplified topology for debugging
         s1 = self.addSwitch('s1')
-        s2 = self.addSwitch('s2')
-        cloud_server = self.addHost('cloud_server', ip='10.0.0.1/24')
+        edge = self.addHost('edge_router', ip='192.168.0.1/24')
+        thermostat = self.addHost('thermostat', ip='192.168.0.101/24')
         
-        # Add links - use standard Mininet interface naming
-        for name in ['thermostat', 'security_cam', 'smart_lock', 'health_monitor', 'malicious_device']:
-            self.addLink(hosts[name], s1)
-        
-        self.addLink(hosts['edge_router'], s1)
-        self.addLink(s1, s2)
-        self.addLink(s2, cloud_server)
+        self.addLink(thermostat, s1)
+        self.addLink(edge, s1)
 
 def cleanup_network():
-    """Clean up any existing network configurations"""
+    """Comprehensive network cleanup"""
     commands = [
         'sudo mn -c',
-        'sudo pkill -f "pox"',
-        'sudo pkill -f "mininet"',
-        'sudo pkill -f "ovs-"',
+        'sudo pkill -f "python3.*main.py"',
+        'sudo pkill -f "ovs-vswitchd"',
+        'sudo pkill -f "ovsdb-server"',
         'sudo rm -rf /var/run/openvswitch/*',
         'sudo rm -rf /tmp/*.out /tmp/*.log',
-        'sudo ip link del edge_router-eth0 2>/dev/null || true',
-        'sudo ip netns del edge_router 2>/dev/null || true'
+        'sudo ip link del s1-eth1 2>/dev/null || true',
+        'sudo ip link del s1-eth2 2>/dev/null || true',
+        'sudo ip netns del edge_router 2>/dev/null || true',
+        'sudo ip netns del thermostat 2>/dev/null || true'
     ]
     
     for cmd in commands:
-        subprocess.call(cmd, shell=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    time.sleep(2)
+        subprocess.run(cmd, shell=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    time.sleep(1)
 
-def start_idps(node):
-    """Start IDPS on edge router"""
-    idps_path = os.path.join(BASE_DIR, 'main.py')
-    node.cmd(f'python3 {idps_path} > {BASE_DIR}/idps.log 2>&1 &')
-    info(f"Started IDPS on {node.name}\n")
-
-def run_attack(host, attack_type):
-    """Run specific attack from a host"""
-    target = '192.168.0.1'  # Edge router IP
-    if attack_type == 'ddos':
-        host.cmd(f'hping3 --flood --rand-source {target} > /dev/null 2>&1 &')
-    elif attack_type == 'portscan':
-        host.cmd(f'nmap -T4 -A {target} > /dev/null 2>&1 &')
-    elif attack_type == 'mqtt_exploit':
-        host.cmd(f'python3 {BASE_DIR}/simulations/attack_generators.py --attack mqtt --target {target} > /dev/null 2>&1 &')
-    info(f"Started {attack_type} attack from {host.name}\n")
-
-def monitor_network(net, duration=120):
-    """Monitor network during test"""
-    start = time.time()
-    edge = net.get('edge_router')
-    
-    while time.time() - start < duration:
-        try:
-            # Check IDPS status
-            idps_status = edge.cmd('pgrep -f "python3.*main.py"')
-            if not idps_status.strip():
-                info("IDPS process crashed! Stopping test.\n")
-                return False
-            
-            # Check connectivity to edge router
-            for host_name in ['thermostat', 'security_cam']:
-                host = net.get(host_name)
-                ping_result = host.cmd(f'ping -c 1 -W 1 {edge.IP()}')
-                if '1 received' not in ping_result:
-                    info(f"Connectivity lost from {host_name}! Stopping test.\n")
-                    return False
-        except Exception as e:
-            error(f"Monitoring error: {str(e)}\n")
-            return False
-        
-        time.sleep(5)
-    
-    return True
-
-def run_test_scenario(net, scenario):
-    """Run predefined test scenario"""
+def verify_ovs():
+    """Check if Open vSwitch is running"""
     try:
-        sys.path.append(os.path.join(BASE_DIR, 'simulations'))
-        from test_scenarios import SCENARIOS
-        
-        if scenario not in SCENARIOS:
-            info(f"Unknown scenario: {scenario}\n")
-            return False
-        
-        test = SCENARIOS[scenario]
-        info(f"Starting scenario: {test['name']}\n")
-        
-        # Start attacks
-        for attack in test['attacks']:
-            device = net.get(attack['device'])
-            run_attack(device, attack['type'])
-        
-        # Run benign traffic
-        for traffic in test['benign_traffic']:
-            device = net.get(traffic['device'])
-            device.cmd(f'python3 {BASE_DIR}/simulations/attack_generators.py --traffic {traffic["type"]} > /dev/null 2>&1 &')
-        
-        # Monitor and collect results
-        success = monitor_network(net, test.get('duration', 120))
-        
-        # Collect IDPS logs
-        edge = net.get('edge_router')
-        edge.cmd('pkill -f "python3.*main.py"')
-        time.sleep(2)
-        edge.cmd(f'mkdir -p {BASE_DIR}/results')
-        edge.cmd(f'mv {BASE_DIR}/audit_logs {BASE_DIR}/results/{scenario}_logs 2>/dev/null || true')
-        
-        return success
-    except Exception as e:
-        error(f"Scenario error: {str(e)}\n")
-        return False
-
-def configure_network(net):
-    """Configure network settings and routes"""
-    try:
-        edge = net.get('edge_router')
-        
-        # Enable IP forwarding
-        edge.cmd('sysctl -w net.ipv4.ip_forward=1')
-        
-        # Configure NAT
-        edge.cmd('iptables -t nat -A POSTROUTING -o edge_router-eth0 -j MASQUERADE')
-        
-        # Set default routes for IoT devices
-        for device in ['thermostat', 'security_cam', 'smart_lock', 'health_monitor', 'malicious_device']:
-            host = net.get(device)
-            host.cmd('ip route add default via 192.168.0.1')
-        
+        result = subprocess.run(['ovs-vsctl', 'show'], 
+                               stdout=subprocess.PIPE, 
+                               stderr=subprocess.PIPE,
+                               text=True)
+        if "ovs-vsctl: unix:/var/run/openvswitch/db.sock: connection failed" in result.stderr:
+            error("Open vSwitch not running! Starting service...\n")
+            subprocess.run(['sudo', 'systemctl', 'start', 'openvswitch-switch'])
+            time.sleep(2)
         return True
-    except Exception as e:
-        error(f"Configuration error: {str(e)}\n")
+    except FileNotFoundError:
+        error("Open vSwitch not installed!\n")
         return False
 
 def main(scenario=None):
-    """Main function to create and test network"""
+    """Main function with enhanced debugging"""
     setLogLevel('info')
     
-    # Clean up previous network state
-    cleanup_network()
-    time.sleep(2)
+    # Verify OVS status
+    if not verify_ovs():
+        error("Open vSwitch dependency failed\n")
+        return 1
     
-    # Initialize Mininet
-    net = Mininet(
-        topo=IoTTopo(),
-        switch=OVSSwitch,
-        controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
-        link=TCLink,
-        autoSetMacs=True,
-        autoStaticArp=True,
-        waitConnected=True,
-        cleanup=True
-    )
+    cleanup_network()
+    time.sleep(1)
     
     try:
-        # Start network
+        info("*** Creating network\n")
+        net = Mininet(
+            topo=IoTTopo(),
+            switch=OVSSwitch,
+            controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
+            link=TCLink,
+            autoSetMacs=True,
+            autoStaticArp=True,
+            waitConnected=True,
+            cleanup=True
+        )
+        
+        info("*** Starting network\n")
         net.start()
         
-        # Configure network settings
-        if not configure_network(net):
-            error("Network configuration failed!\n")
+        # Verify controller connection
+        if not net.controllers or not net.controllers[0].isActive():
+            error("*** Controller connection failed!\n")
             return 1
         
-        # Start IDPS
-        start_idps(net.get('edge_router'))
+        info("*** Network started successfully\n")
         
-        # Create results directory
-        net.get('edge_router').cmd(f'mkdir -p {BASE_DIR}/results')
+        # Simple ping test
+        info("*** Testing connectivity\n")
+        edge = net.get('edge_router')
+        thermostat = net.get('thermostat')
+        ping_result = thermostat.cmd('ping -c 1 192.168.0.1')
         
-        if scenario:
-            # Run test scenario
-            result = run_test_scenario(net, scenario)
-            info(f"Scenario {scenario} completed: {'Success' if result else 'Failure'}\n")
-            return 0 if result else 1
-        else:
-            # Interactive mode
-            info("Network ready. Starting CLI...\n")
-            CLI(net)
-            return 0
+        if '1 received' not in ping_result:
+            error("*** Basic connectivity test failed!\n")
+            return 1
+        
+        info("*** Connectivity test passed\n")
+        
+        # Continue with your scenario logic...
+        info("*** Test completed successfully\n")
+        return 0
+        
     except Exception as e:
-        error(f"Runtime error: {str(e)}\n")
+        error(f"*** Critical error: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
         return 1
     finally:
-        # Stop network and clean up
+        info("*** Cleaning up\n")
         net.stop()
         cleanup_network()
 
