@@ -9,7 +9,7 @@ sys.path.insert(0, project_root)
 from config import BASE_DIR
 from mininet.topo import Topo
 from mininet.net import Mininet
-from mininet.node import OVSSwitch, RemoteController, Host, LinuxBridge
+from mininet.node import OVSSwitch, RemoteController, Host
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info, error
 from mininet.link import TCLink
