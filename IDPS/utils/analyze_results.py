@@ -1,17 +1,20 @@
 import json
-import csv
-from collections import defaultdict
+import os
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# Base directory for the project
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULTS_DIR = os.path.join(BASE_DIR, 'results')
+
 def load_detections():
     """Load and analyze detection events"""
     detections = []
-    detections_file = Path('results/detections.json')
+    detections_file = Path(os.path.join(RESULTS_DIR, 'detections.json'))
     
     if not detections_file.exists():
-        print("No detections file found")
+        print(f"No detections file found at {detections_file}")
         return []
     
     with open(detections_file, 'r') as f:
@@ -25,10 +28,10 @@ def load_detections():
 
 def load_metrics():
     """Load and analyze metrics"""
-    metrics_file = Path('results/metrics.csv')
+    metrics_file = Path(os.path.join(RESULTS_DIR, 'metrics.csv'))
     
     if not metrics_file.exists():
-        print("No metrics file found")
+        print(f"No metrics file found at {metrics_file}")
         return None
     
     try:
@@ -81,7 +84,7 @@ def generate_report():
             print("\nGenerating plots...")
             
             # Create results directory if it doesn't exist
-            results_dir = Path('results')
+            results_dir = Path(RESULTS_DIR)
             results_dir.mkdir(exist_ok=True)
             
             # Plot packet counts over time
