@@ -161,8 +161,8 @@ def main(scenario=None):
         info("*** Creating network\n")
         net = Mininet(
             topo=IoTTopo(),
+            controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6633),
             switch=OVSSwitch,
-            controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
             link=TCLink,
             autoSetMacs=True,
             autoStaticArp=True,
