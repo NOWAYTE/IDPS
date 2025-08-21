@@ -107,10 +107,22 @@ class AuditLogger:
         with open(self.log_file, 'a') as f:
             f.write(f"{new_hash}|{entry_str}\n")
     
-    def log_event(self, event_type, source_ip, action, confidence=None, details=None):
-        """Add an audit event to the log queue"""
+    def log_event(self, event_type, source_ip=None, action=None, confidence=None, details=None, description=None, severity=None):
+        """Add an audit event to the log queue
+        
+        Supports both old and new parameter formats:
+        - Old format: log_event(event_type, source_ip, action, confidence, details)
+        - New format: log_event(event_type, description=..., severity=...)
+        """
+        # Handle new format with description and severity
+        if description is not None:
+            details = description
+            action = event_type
+            source_ip = "test_runner" if source_ip is None else source_ip
+            confidence = {"high": 0.9, "medium": 0.6, "low": 0.3}.get(severity.lower(), 0.5) if severity else 0.5
+        
         # Anonymize IP if required by GDPR
-        if GDPR_COMPLIANCE:
+        if GDPR_COMPLIANCE and source_ip:
             from .anonymizer import anonymize_ip
             source_ip = anonymize_ip(source_ip)
         
@@ -120,10 +132,10 @@ class AuditLogger:
             self.log_queue.append({
                 "timestamp": timestamp,
                 "event_type": event_type,
-                "source_ip": source_ip,
-                "action": action,
-                "confidence": confidence,
-                "details": details
+                "source_ip": source_ip or "system",
+                "action": action or "unknown",
+                "confidence": confidence or 0.5,
+                "details": details or {}
             })
     
     def _process_queue(self):
