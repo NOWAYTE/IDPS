@@ -11,14 +11,20 @@ from config import BASE_DIR, GDPR_COMPLIANCE
 import logging
 
 class AuditLogger:
-    def __init__(self):
+    def __init__(self, test_mode=False, test_name=None):
+        self.test_mode = test_mode
+        self.test_name = test_name
         self.current_log_date = datetime.utcnow().date()  # Initialize first
         self.log_queue = []
         self.lock = threading.Lock()
         self.running = True
         
-        # Create secure log directory
-        self.log_dir = os.path.join(BASE_DIR, 'audit_logs')
+        # Set up log directory based on mode
+        if test_mode and test_name:
+            self.log_dir = os.path.join(BASE_DIR, 'results', f'{test_name}_logs')
+        else:
+            self.log_dir = os.path.join(BASE_DIR, 'audit_logs')
+            
         os.makedirs(self.log_dir, exist_ok=True)
         
         # Generate encryption key (in production, use secure key management)
@@ -39,9 +45,13 @@ class AuditLogger:
         return os.urandom(32)
     
     def _get_log_file_path(self):
-        """Get path for current log file based on date"""
-        date_str = self.current_log_date.strftime("%Y-%m-%d")
-        return os.path.join(self.log_dir, f"audit_log_{date_str}.enc")
+        """Get path for current log file based on date and test mode"""
+        if self.test_mode and self.test_name:
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            return os.path.join(self.log_dir, f"{self.test_name}_{timestamp}.enc")
+        else:
+            date_str = self.current_log_date.strftime("%Y-%m-%d")
+            return os.path.join(self.log_dir, f"audit_log_{date_str}.enc")
     
     def _initialize_log_file(self):
         """Create new log file with header"""

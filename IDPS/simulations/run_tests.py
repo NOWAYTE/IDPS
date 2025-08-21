@@ -67,12 +67,23 @@ def run_scenario(scenario):
     # Clean up before starting the scenario
     cleanup_between_scenarios()
     
+    # Initialize audit logger for this test
+    from compliance.audit_logger import AuditLogger
+    audit_logger = AuditLogger(test_mode=True, test_name=scenario)
+    
     try:
         # Create log directory first
         log_dir = os.path.join(BASE_DIR, 'results', f'{scenario}_logs')
         os.makedirs(log_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         log_file = os.path.join(log_dir, f'{scenario}_{timestamp}.log')
+        
+        # Log test start
+        audit_logger.log_event(
+            event_type="test_start",
+            description=f"Starting test scenario: {scenario}",
+            severity="info"
+        )
         
         # Run the scenario with both stdout and stderr redirected
         cmd = f"sudo python3 {os.path.join('simulations', 'mininet_iot.py')} {scenario} 2>&1"
@@ -81,7 +92,7 @@ def run_scenario(scenario):
             shell=True,
             cwd=project_root,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr with stdout
+            stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
             universal_newlines=True
@@ -105,6 +116,26 @@ def run_scenario(scenario):
                     mins = int(elapsed) // 60
                     secs = int(elapsed) % 60
                     print(f"[{mins:02d}:{secs:02d}] {output.strip()}")
+                    
+                    # Log important events to audit log
+                    if "detected" in output.lower() or "alert" in output.lower():
+                        audit_logger.log_event(
+                            event_type="detection",
+                            description=output.strip(),
+                            severity="high" if "alert" in output.lower() else "medium"
+                        )
+        
+        # Log test completion
+        test_duration = time.time() - start_time
+        audit_logger.log_event(
+            event_type="test_complete",
+            description=f"Completed test scenario: {scenario}",
+            severity="info",
+            duration=test_duration
+        )
+        
+        # Ensure all logs are written
+        audit_logger.shutdown()
         
         # Check return code
         return_code = process.poll()
@@ -122,6 +153,13 @@ def run_scenario(scenario):
         return True
         
     except Exception as e:
+        # Log test failure
+        audit_logger.log_event(
+            event_type="test_error",
+            description=f"Error in test scenario {scenario}: {str(e)}",
+            severity="critical"
+        )
+        audit_logger.shutdown()
         print(f"[!] Error running scenario {scenario}: {str(e)}")
         if 'log_file' in locals() and os.path.exists(log_file):
             with open(log_file, 'r') as f:
