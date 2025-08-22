@@ -1,142 +1,161 @@
 import os
 import json
 import hashlib
+import logging
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidTag
 from config import BASE_DIR
-import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging
 logger = logging.getLogger(__name__)
 
 class AuditVerifier:
     def __init__(self, encryption_key=None):
         """
-        Initialize the AuditVerifier
-        
-        Args:
-            encryption_key: Optional key for decryption. If None, will try to use the same key as AuditLogger
+        Initialize the AuditVerifier with an optional encryption key.
+        If no key is provided, it will try to use the default key from AuditLogger.
         """
-        if encryption_key is None:
-            # Try to use the same key as AuditLogger
-            try:
-                from .audit_logger import AuditLogger
-                dummy_logger = AuditLogger()
-                self.encryption_key = dummy_logger._generate_encryption_key()
-                logger.info("Using default encryption key from AuditLogger")
-            except Exception as e:
-                logger.error(f"Failed to get encryption key from AuditLogger: {e}")
-                raise ValueError("Encryption key is required")
-        else:
-            self.encryption_key = encryption_key
-            
+        self.encryption_key = encryption_key
         self.log_dir = os.path.join(BASE_DIR, 'audit_logs')
+        
+        # Set default key if not provided
+        if not self.encryption_key:
+            self._set_default_key()
     
-    def _decrypt_entry(self, encrypted_entry):
+    def _set_default_key(self):
+        """Set the default encryption key from AuditLogger"""
+        try:
+            from .audit_logger import AuditLogger
+            # Create a temporary logger to get the key
+            temp_logger = AuditLogger()
+            self.encryption_key = temp_logger._generate_encryption_key()
+            logger.info("Using default encryption key from AuditLogger")
+        except Exception as e:
+            logger.error(f"Failed to get encryption key from AuditLogger: {e}")
+            raise ValueError("Encryption key is required and could not be obtained from AuditLogger")
+    
+    def _decrypt_entry(self, entry):
         """
-        Decrypt an audit log entry
+        Decrypt a single log entry.
         
         Args:
-            encrypted_entry: Dictionary containing 'nonce', 'ciphertext', and 'tag'
+            entry (dict): The encrypted log entry with 'nonce', 'ciphertext', and 'tag' keys
             
         Returns:
-            dict: Decrypted log entry
+            dict: The decrypted log entry
             
         Raises:
-            ValueError: If decryption fails or entry is invalid
+            ValueError: If decryption fails or the entry is invalid
         """
-        try:
-            nonce = bytes.fromhex(encrypted_entry.get('nonce', ''))
-            ciphertext = bytes.fromhex(encrypted_entry.get('ciphertext', ''))
-            tag = bytes.fromhex(encrypted_entry.get('tag', ''))
+        if not isinstance(entry, dict):
+            raise ValueError("Entry must be a dictionary")
             
-            if not all([nonce, ciphertext, tag]):
-                raise ValueError("Missing required fields in encrypted entry")
-                
+        required_fields = {'nonce', 'ciphertext', 'tag'}
+        if not all(field in entry for field in required_fields):
+            raise ValueError(f"Missing required fields in entry. Required: {required_fields}")
+        
+        try:
+            # Convert hex strings to bytes
+            nonce = bytes.fromhex(entry['nonce'])
+            ciphertext = bytes.fromhex(entry['ciphertext'])
+            tag = bytes.fromhex(entry['tag'])
+            
+            # Set up the cipher
             cipher = Cipher(
                 algorithms.AES(self.encryption_key),
                 modes.GCM(nonce, tag),
                 backend=default_backend()
             )
-            decryptor = cipher.decryptor()
             
+            # Decrypt the data
+            decryptor = cipher.decryptor()
+            plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+            
+            # Parse the JSON data
             try:
-                plaintext = decryptor.update(ciphertext) + decryptor.finalize()
                 return json.loads(plaintext.decode('utf-8'))
-            except (ValueError, json.JSONDecodeError) as e:
-                logger.error(f"Failed to decode decrypted data: {e}")
-                raise ValueError("Invalid decrypted data format")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse decrypted JSON: {e}")
+                raise ValueError("Invalid JSON in decrypted data")
                 
         except InvalidTag as e:
-            logger.error(f"Decryption failed - invalid tag: {e}")
-            raise ValueError("Decryption failed - invalid authentication tag")
+            logger.error("Decryption failed - invalid authentication tag")
+            raise ValueError("Decryption failed - invalid authentication tag") from e
         except Exception as e:
             logger.error(f"Decryption error: {e}")
-            raise ValueError(f"Decryption failed: {str(e)}")
+            raise ValueError(f"Decryption failed: {str(e)}") from e
     
     def verify_log_file(self, log_path):
         """
-        Verify integrity of a log file and decrypt its contents
+        Verify and decrypt a log file.
         
         Args:
-            log_path: Path to the log file to verify and decrypt
+            log_path (str): Path to the log file to verify
             
         Returns:
             list: List of verified and decrypted log entries
             
         Raises:
-            FileNotFoundError: If log file doesn't exist
-            ValueError: If log file is invalid or corrupted
+            FileNotFoundError: If the log file doesn't exist
+            ValueError: If the log file is invalid or corrupted
         """
         if not os.path.exists(log_path):
             raise FileNotFoundError(f"Log file not found: {log_path}")
-            
+        
         verified_entries = []
-        previous_hash = "0" * 64  # Genesis hash for header
-        line_number = 0
+        previous_hash = "0" * 64  # Initial hash for the first entry
         
         try:
             with open(log_path, 'r') as f:
-                for line_number, line in enumerate(f, 1):
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
                         
                     try:
+                        # Split the line into hash and JSON parts
                         parts = line.split('|', 1)
                         if len(parts) != 2:
-                            logger.warning(f"Invalid log entry format at line {line_number}")
+                            logger.warning(f"Invalid log format at line {line_num}: expected 'hash|json'")
                             continue
                             
                         entry_hash, entry_json = parts
                         
-                        # Verify hash chain
+                        # Verify the hash chain
                         computed_hash = hashlib.sha256(
                             (previous_hash + entry_json).encode('utf-8')
                         ).hexdigest()
                         
                         if computed_hash != entry_hash:
-                            logger.warning(f"Hash mismatch at line {line_number}")
+                            logger.warning(f"Hash mismatch at line {line_num}")
                             continue
                         
-                        # Decrypt entry
                         try:
-                            encrypted_entry = json.loads(entry_json)
-                            decrypted_entry = self._decrypt_entry(encrypted_entry)
-                            verified_entries.append(decrypted_entry)
+                            # Parse the JSON data
+                            entry_data = json.loads(entry_json)
+                            
+                            # Decrypt the entry if it's encrypted
+                            if all(key in entry_data for key in ['nonce', 'ciphertext', 'tag']):
+                                decrypted_entry = self._decrypt_entry(entry_data)
+                                verified_entries.append(decrypted_entry)
+                            else:
+                                # If not encrypted, just add the entry
+                                verified_entries.append(entry_data)
+                                
+                            # Update the previous hash for the next iteration
                             previous_hash = entry_hash
-                        except json.JSONDecodeError:
-                            logger.error(f"Invalid JSON at line {line_number}")
+                            
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Invalid JSON at line {line_num}: {e}")
                             continue
                             
                     except Exception as e:
-                        logger.error(f"Error processing line {line_number}: {str(e)}")
+                        logger.error(f"Error processing line {line_num}: {e}")
                         continue
                         
         except Exception as e:
-            logger.error(f"Failed to process log file: {str(e)}")
+            logger.error(f"Failed to process log file: {e}")
             raise ValueError(f"Log file processing failed: {str(e)}")
         
         return verified_entries

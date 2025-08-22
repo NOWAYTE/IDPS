@@ -152,45 +152,68 @@ def generate_report(scenarios):
     os.makedirs(reports_dir, exist_ok=True)
     
     # Initialize audit verifier
-    verifier = AuditVerifier()
+    try:
+        verifier = AuditVerifier()
+    except Exception as e:
+        logger.error(f"Failed to initialize audit verifier: {e}")
+        verifier = None
     
     for scenario in scenarios:
+        scenario_report = {
+            'success': False,
+            'error': None,
+            'metrics': {},
+            'audit': {
+                'status': 'not_verified',
+                'entries': 0,
+                'error': None
+            }
+        }
+        
         try:
             # Analyze scenario results
             metrics = analyze_scenario(scenario)
+            scenario_report['metrics'] = metrics
             
-            # Verify audit logs
-            log_dir = os.path.join(BASE_DIR, 'audit_logs')
-            log_files = sorted([f for f in os.listdir(log_dir) 
-                             if f.startswith(f'audit_log_{scenario}')])
+            # Verify audit logs if verifier is available
+            if verifier:
+                log_dir = os.path.join(BASE_DIR, 'audit_logs')
+                log_files = sorted([f for f in os.listdir(log_dir) 
+                                 if f.startswith(f'audit_log_{scenario}')])
+                
+                if not log_files:
+                    logger.warning(f"No audit logs found for scenario: {scenario}")
+                    scenario_report['audit']['status'] = 'no_logs_found'
+                else:
+                    try:
+                        log_path = os.path.join(log_dir, log_files[-1])  # Use most recent log
+                        verified_entries = verifier.verify_log_file(log_path)
+                        scenario_report['audit'].update({
+                            'status': 'verified',
+                            'entries': len(verified_entries),
+                            'sample_entry': verified_entries[0] if verified_entries else None
+                        })
+                    except Exception as e:
+                        logger.error(f"Failed to verify audit logs for {scenario}: {e}")
+                        scenario_report['audit'].update({
+                            'status': 'verification_failed',
+                            'error': str(e)
+                        })
             
-            if not log_files:
-                logger.warning(f"No audit logs found for scenario: {scenario}")
-                metrics['audit_status'] = 'missing_logs'
-            else:
-                try:
-                    log_path = os.path.join(log_dir, log_files[-1])
-                    verified_entries = verifier.verify_log_file(log_path)
-                    metrics['audit_entries'] = len(verified_entries)
-                    metrics['audit_status'] = 'verified'
-                except Exception as e:
-                    logger.error(f"Failed to verify audit logs for {scenario}: {e}")
-                    metrics['audit_status'] = 'verification_failed'
-            
-            report['scenarios'][scenario] = metrics
-            
+            # Check if scenario was successful
             if metrics.get('success', False):
                 report['summary']['passed'] += 1
+                scenario_report['success'] = True
             else:
                 report['summary']['failed'] += 1
+                scenario_report['error'] = metrics.get('error', 'Unknown error')
                 
         except Exception as e:
             logger.error(f"Error generating report for {scenario}: {e}")
-            report['scenarios'][scenario] = {
-                'error': str(e),
-                'success': False
-            }
             report['summary']['failed'] += 1
+            scenario_report['error'] = str(e)
+        
+        report['scenarios'][scenario] = scenario_report
     
     # Calculate success rate
     if report['summary']['total'] > 0:
@@ -199,15 +222,33 @@ def generate_report(scenarios):
         )
     
     # Save report to file
-    report_file = os.path.join(
-        reports_dir, 
-        f'test_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
-    )
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_file = os.path.join(reports_dir, f'test_report_{timestamp}.json')
     
     with open(report_file, 'w') as f:
-        json.dump(report, f, indent=2)
+        json.dump(report, f, indent=2, default=str)
     
-    logger.info(f"Test report generated: {report_file}")
+    # Print summary
+    print("\n" + "="*60)
+    print(f"TEST EXECUTION SUMMARY - {timestamp}")
+    print("="*60)
+    print(f"{'Scenario':<20} {'Status':<10} {'Audit':<15} Details")
+    print("-"*60)
+    
+    for scenario, data in report['scenarios'].items():
+        status = 'PASSED' if data['success'] else 'FAILED'
+        audit_status = data['audit']['status']
+        details = data.get('error', '')
+        print(f"{scenario:<20} {status:<10} {audit_status:<15} {details}")
+    
+    print("="*60)
+    print(f"Total: {report['summary']['total']}  "
+          f"Passed: {report['summary']['passed']}  "
+          f"Failed: {report['summary']['failed']}  "
+          f"Success Rate: {report['summary']['success_rate']:.1f}%")
+    print(f"\nDetailed report saved to: {report_file}")
+    print("="*60 + "\n")
+    
     return report_file
 
 def main():
