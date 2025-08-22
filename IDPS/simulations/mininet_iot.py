@@ -67,7 +67,7 @@ def cleanup_network():
         'sudo mn -c >/dev/null 2>&1 || true',
         # Kill any remaining Python processes
         'sudo pkill -f "python.*mininet" || true',
-        'sudo pkill -f "python.*main\.py" || true',
+        r'sudo pkill -f "python.*main\.py" || true',
         # Clean up OVS
         'sudo ovs-vsctl del-br s1 2>/dev/null || true',
         'sudo ovs-vsctl del-manager 2>/dev/null || true',
@@ -131,27 +131,50 @@ def cleanup_network():
 
 def start_ovs_service():
     """Ensure Open vSwitch service is running"""
+    logger = get_audit_logger()
     try:
-        # Check if OVS service is active
-        result = subprocess.run(['systemctl', 'is-active', 'openvswitch-switch'], 
-                               stdout=subprocess.PIPE, 
-                               stderr=subprocess.PIPE,
-                               text=True)
-        if result.stdout.strip() != 'active':
-            info("*** Starting Open vSwitch service...\n")
-            subprocess.run(['sudo', 'systemctl', 'start', 'openvswitch-switch'], check=True)
-            time.sleep(2)  # Wait for service to start
+        # Check if OVS service is active using pgrep instead of systemctl
+        ovs_running = subprocess.run(
+            ['pgrep', '-x', 'ovs-vswitchd'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         
-        # Verify OVS database connection
-        result = subprocess.run(['ovs-vsctl', 'show'], 
-                               stdout=subprocess.PIPE, 
-                               stderr=subprocess.PIPE,
-                               text=True)
-        if result.returncode != 0:
-            error(f"*** OVS still not working: {result.stderr}\n")
+        if ovs_running.returncode != 0:
+            info("*** Starting Open vSwitch service...\n")
+            # Try to start OVS using systemd if available
+            try:
+                subprocess.run(['sudo', 'systemctl', 'start', 'openvswitch-switch'], 
+                             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                time.sleep(2)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # Fallback to manual OVS start if systemd is not available
+                subprocess.run(['sudo', 'ovsdb-server', '--remote=punix:/var/run/openvswitch/db.sock',
+                              '--remote=db:Open_vSwitch,Open_vSwitch,manager_options',
+                              '--pidfile', '--detach'],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(['sudo', 'ovs-vswitchd', '--pidfile', '--detach'],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                time.sleep(2)
+        
+        # Verify OVS database connection with timeout
+        try:
+            result = subprocess.run(
+                ['ovs-vsctl', 'show'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,
+                text=True
+            )
+            if result.returncode != 0:
+                error(f"*** OVS still not working: {result.stderr}\n")
+                return False
+            return True
+            
+        except subprocess.TimeoutExpired:
+            error("*** OVS check timed out - service may be unresponsive\n")
             return False
             
-        return True
     except Exception as e:
         error(f"*** OVS service error: {str(e)}\n")
         return False
@@ -326,6 +349,28 @@ def main(scenario=None):
             
         finally:
             # Always clean up the network
+            net.stop()
+            cleanup_network()
+            
+    except Exception as e:
+        # Log any initialization errors
+        logger.log_event(
+            event_type="test_error",
+            description=f"Test initialization failed: {str(e)}",
+            severity="error",
+            details={"exception": str(e), "type": type(e).__name__}
+        )
+        cleanup_network()
+        return 1
+    
+    finally:
+        # Ensure all logs are flushed
+        if 'logger' in locals():
+            logger.shutdown()
+
+if __name__ == '__main__':
+    scenario = sys.argv[1] if len(sys.argv) > 1 else None
+    sys.exit(main(scenario))            # Always clean up the network
             net.stop()
             cleanup_network()
             
