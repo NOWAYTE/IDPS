@@ -31,29 +31,58 @@ def get_audit_logger():
 
 def cleanup_network():
     """Comprehensive network cleanup"""
+    # First, try to stop any running Mininet instances gracefully
+    try:
+        from mininet.clean import cleanup
+        cleanup()
+    except:
+        pass  # Ignore if mininet.clean is not available
+    
+    # List of commands to clean up network state
     commands = [
-        'sudo mn -c >/dev/null 2>&1',
-        'sudo pkill -f "python3.*main.py"',
-        'sudo pkill -f "ovs-vswitchd"',
-        'sudo pkill -f "ovsdb-server"',
-        'sudo rm -rf /var/run/openvswitch/*',
-        'sudo rm -rf /tmp/*.out /tmp/*.log',
-        'sudo ip link del s1-eth1 >/dev/null 2>&1 || true',
-        'sudo ip link del s1-eth2 >/dev/null 2>&1 || true',
-        'sudo ip netns del edge_router >/dev/null 2>&1 || true',
-        'sudo ip netns del thermostat >/dev/null 2>&1 || true',
-        'sudo ovs-vsctl --if-exists del-br s1',
-        'sudo ovs-vsctl --if-exists del-manager',
-        'sudo service openvswitch-switch restart',
-        'sleep 2'  # Give OVS time to restart
+        # Stop any running Mininet instances
+        'sudo mn -c >/dev/null 2>&1 || true',
+        # Kill any remaining Python processes
+        'sudo pkill -f "python.*mininet" || true',
+        'sudo pkill -f "python.*main.py" || true',
+        # Clean up OVS
+        'sudo ovs-vsctl del-br s1 2>/dev/null || true',
+        'sudo ovs-vsctl del-manager 2>/dev/null || true',
+        'sudo pkill -f "ovs-vswitchd" || true',
+        'sudo pkill -f "ovsdb-server" || true',
+        # Clean up network namespaces
+        'sudo ip -all netns delete 2>/dev/null || true',
+        # Clean up any remaining interfaces
+        'sudo ip link del s1-eth1 2>/dev/null || true',
+        'sudo ip link del s1-eth2 2>/dev/null || true',
+        'sudo ip link del edge_router-eth0 2>/dev/null || true',
+        'sudo ip link del therm-eth0 2>/dev/null || true',
+        'sudo ip link del cam-eth0 2>/dev/null || true',
+        'sudo ip link del lock-eth0 2>/dev/null || true',
+        'sudo ip link del health-eth0 2>/dev/null || true',
+        'sudo ip link del malicious-eth0 2>/dev/null || true',
+        # Clean up OVS data
+        'sudo rm -rf /var/run/openvswitch/* 2>/dev/null || true',
+        'sudo rm -f /tmp/*.out /tmp/*.log 2>/dev/null || true',
+        # Restart OVS
+        'sudo systemctl restart openvswitch-switch 2>/dev/null || \
+         sudo service openvswitch-switch restart 2>/dev/null || true',
+        # Give OVS time to restart
+        'sleep 2'
     ]
     
+    # Execute each command with error handling
     for cmd in commands:
         try:
-            subprocess.run(cmd, shell=True, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"[!] Warning during cleanup: {e}")
-    time.sleep(2)  # Additional delay to ensure cleanup completes
+            subprocess.run(cmd, shell=True, check=False)
+        except Exception as e:
+            print(f"[!] Warning during cleanup: {e}", file=sys.stderr)
+    
+    # Final check for any remaining processes
+    try:
+        subprocess.run('pgrep -fl "mininet|ovs" || true', shell=True)
+    except:
+        pass
 
 def start_ovs_service():
     """Ensure Open vSwitch service is running"""
