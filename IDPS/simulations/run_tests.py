@@ -10,9 +10,16 @@ import sys
 import time
 import subprocess
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
-import random
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +27,7 @@ sys.path.insert(0, project_root)
 
 from config import BASE_DIR
 from utils.results_analyzer import analyze_scenario
+from compliance.audit_verifier import AuditVerifier
 
 # Test scenarios to run
 TEST_SCENARIOS = [
@@ -32,37 +40,37 @@ TEST_SCENARIOS = [
 
 def cleanup_between_scenarios():
     """Ensure clean environment between test scenarios"""
-    print("\n[+] Cleaning up between scenarios...")
+    logger.info("Cleaning up between scenarios...")
     
-    # Import cleanup function from mininet_iot
-    from mininet_iot import cleanup_network
-    
-    # Run cleanup
-    cleanup_network()
+    try:
+        # Import cleanup function from mininet_iot
+        from mininet_iot import cleanup_network
+        cleanup_network()
+    except Exception as e:
+        logger.warning(f"Error during cleanup: {e}")
     
     # Additional cleanup commands
     cleanup_cmds = [
-        'sudo pkill -f "python.*mininet"',
-        'sudo pkill -f "ovs-vswitchd"',
-        'sudo pkill -f "ovsdb-server"',
-        'sudo rm -rf /var/run/openvswitch/*',
-        'sudo service openvswitch-switch restart',
+        'sudo pkill -f "python.*mininet" || true',
+        'sudo pkill -f "ovs-vswitchd" || true',
+        'sudo pkill -f "ovsdb-server" || true',
+        'sudo rm -rf /var/run/openvswitch/* || true',
+        'sudo service openvswitch-switch restart || true',
+        'sudo mn -c >/dev/null 2>&1 || true',
     ]
     
     for cmd in cleanup_cmds:
         try:
-            subprocess.run(cmd, shell=True, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"[!] Warning during cleanup: {e}")
+            subprocess.run(cmd, shell=True, check=False)
+        except Exception as e:
+            logger.warning(f"Cleanup command failed: {cmd} - {e}")
     
     # Give the system a moment to stabilize
     time.sleep(5)
 
 def run_scenario(scenario):
     """Run a single test scenario and return execution status"""
-    print(f"\n{'='*50}")
-    print(f"Starting scenario: {scenario}")
-    print(f"{'='*50}")
+    logger.info(f"Starting scenario: {scenario}")
     
     # Clean up before starting the scenario
     cleanup_between_scenarios()
@@ -86,153 +94,162 @@ def run_scenario(scenario):
         )
         
         # Run the scenario with both stdout and stderr redirected
-        cmd = f"sudo python3 {os.path.join('simulations', 'mininet_iot.py')} {scenario} 2>&1"
-        process = subprocess.Popen(
-            cmd,
-            shell=True,
-            cwd=project_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
-        )
+        cmd = [
+            'sudo', 'python3', 
+            os.path.join('simulations', 'mininet_iot.py'),
+            scenario
+        ]
         
-        start_time = time.time()
-        
-        # Capture and log all output in real-time
-        with open(log_file, 'w') as f_log:
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    # Write to log file
-                    f_log.write(output)
-                    f_log.flush()
-                    
-                    # Print to console with timestamp
-                    elapsed = time.time() - start_time
-                    mins = int(elapsed) // 60
-                    secs = int(elapsed) % 60
-                    print(f"[{mins:02d}:{secs:02d}] {output.strip()}")
-                    
-                    # Log important events to audit log
-                    if "detected" in output.lower() or "alert" in output.lower():
-                        audit_logger.log_event(
-                            event_type="detection",
-                            description=output.strip(),
-                            severity="high" if "alert" in output.lower() else "medium"
-                        )
-        
-        # Log test completion
-        test_duration = time.time() - start_time
-        audit_logger.log_event(
-            event_type="test_complete",
-            description=f"Completed test scenario: {scenario}",
-            severity="info",
-            duration=test_duration
-        )
-        
-        # Ensure all logs are written
-        audit_logger.shutdown()
-        
-        # Check return code
-        return_code = process.poll()
+        with open(log_file, 'w') as f:
+            process = subprocess.Popen(
+                cmd,
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # Stream output to both console and log file
+            for line in process.stdout:
+                print(line, end='')
+                f.write(line)
+                f.flush()
+                
+            # Wait for process to complete
+            return_code = process.wait()
+            
         if return_code != 0:
-            print(f"[!] Scenario {scenario} failed with return code {return_code}")
-            # Show last 10 lines of log for debugging
-            with open(log_file, 'r') as f:
-                lines = f.readlines()
-                print("\nLast 10 lines of log:")
-                for line in lines[-10:]:
-                    print(f"  {line.strip()}")
+            logger.error(f"Scenario {scenario} failed with return code {return_code}")
             return False
             
-        print(f"[{int(time.time() - start_time)//60:02d}:{int(time.time() - start_time)%60:02d}] Scenario completed successfully")
         return True
         
     except Exception as e:
-        # Log test failure
-        audit_logger.log_event(
-            event_type="test_error",
-            description=f"Error in test scenario {scenario}: {str(e)}",
-            severity="critical"
-        )
-        audit_logger.shutdown()
-        print(f"[!] Error running scenario {scenario}: {str(e)}")
-        if 'log_file' in locals() and os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                print("\nLog file contents:")
-                print(f.read())
+        logger.error(f"Error running scenario {scenario}: {e}", exc_info=True)
         return False
+    finally:
+        # Ensure audit logs are flushed
+        if 'audit_logger' in locals():
+            del audit_logger
 
 def generate_report(scenarios):
     """Generate a test report from all scenario results"""
     report = {
-        "timestamp": datetime.now().isoformat(),
-        "scenarios": {}
+        'timestamp': datetime.now().isoformat(),
+        'scenarios': {},
+        'summary': {
+            'total': len(scenarios),
+            'passed': 0,
+            'failed': 0,
+            'success_rate': 0.0
+        }
     }
     
+    # Create reports directory
+    reports_dir = os.path.join(BASE_DIR, 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
+    
+    # Initialize audit verifier
+    verifier = AuditVerifier()
+    
     for scenario in scenarios:
-        metrics = analyze_scenario(scenario)
-        if metrics:
-            report["scenarios"][scenario] = metrics
+        try:
+            # Analyze scenario results
+            metrics = analyze_scenario(scenario)
+            
+            # Verify audit logs
+            log_dir = os.path.join(BASE_DIR, 'audit_logs')
+            log_files = sorted([f for f in os.listdir(log_dir) 
+                             if f.startswith(f'audit_log_{scenario}')])
+            
+            if not log_files:
+                logger.warning(f"No audit logs found for scenario: {scenario}")
+                metrics['audit_status'] = 'missing_logs'
+            else:
+                try:
+                    log_path = os.path.join(log_dir, log_files[-1])
+                    verified_entries = verifier.verify_log_file(log_path)
+                    metrics['audit_entries'] = len(verified_entries)
+                    metrics['audit_status'] = 'verified'
+                except Exception as e:
+                    logger.error(f"Failed to verify audit logs for {scenario}: {e}")
+                    metrics['audit_status'] = 'verification_failed'
+            
+            report['scenarios'][scenario] = metrics
+            
+            if metrics.get('success', False):
+                report['summary']['passed'] += 1
+            else:
+                report['summary']['failed'] += 1
+                
+        except Exception as e:
+            logger.error(f"Error generating report for {scenario}: {e}")
+            report['scenarios'][scenario] = {
+                'error': str(e),
+                'success': False
+            }
+            report['summary']['failed'] += 1
     
-    # Save the report
-    report_dir = os.path.join(BASE_DIR, 'results')
-    os.makedirs(report_dir, exist_ok=True)
-    report_path = os.path.join(report_dir, 'test_report.json')
+    # Calculate success rate
+    if report['summary']['total'] > 0:
+        report['summary']['success_rate'] = (
+            report['summary']['passed'] / report['summary']['total'] * 100
+        )
     
-    with open(report_path, 'w') as f:
+    # Save report to file
+    report_file = os.path.join(
+        reports_dir, 
+        f'test_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+    )
+    
+    with open(report_file, 'w') as f:
         json.dump(report, f, indent=2)
     
-    return report_path
+    logger.info(f"Test report generated: {report_file}")
+    return report_file
 
 def main():
     """Main function to run all test scenarios"""
-    print("="*50)
-    print("Starting IDPS Test Suite")
-    print("="*50)
+    logger.info("Starting IDPS test suite")
     
-    # Initial cleanup
-    cleanup_between_scenarios()
-    
-    # Ensure results directory exists
-    results_dir = os.path.join(BASE_DIR, 'results')
-    os.makedirs(results_dir, exist_ok=True)
+    # Parse command line arguments
+    scenarios_to_run = TEST_SCENARIOS
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--help':
+            print(f"Usage: {sys.argv[0]} [scenario1 scenario2 ...]")
+            print(f"Available scenarios: {', '.join(TEST_SCENARIOS)}")
+            return
+        scenarios_to_run = [s for s in sys.argv[1:] if s in TEST_SCENARIOS]
     
     # Run each scenario
     results = {}
-    for scenario in TEST_SCENARIOS:
-        start_time = time.time()
+    for scenario in scenarios_to_run:
         success = run_scenario(scenario)
-        duration = time.time() - start_time
-        
-        results[scenario] = {
-            "status": "PASS" if success else "FAIL",
-            "duration_seconds": round(duration, 2)
-        }
-        
-        # Clean up after each scenario
-        cleanup_between_scenarios()
+        results[scenario] = 'PASSED' if success else 'FAILED'
     
-    # Generate final report
-    print("\nGenerating test report...")
-    report_path = generate_report(TEST_SCENARIOS)
+    # Generate report
+    try:
+        report_path = generate_report(scenarios_to_run)
+        logger.info(f"Test report saved to: {report_path}")
+    except Exception as e:
+        logger.error(f"Failed to generate test report: {e}", exc_info=True)
     
     # Print summary
     print("\n" + "="*50)
-    print("Test Suite Summary")
+    print("TEST SUMMARY")
     print("="*50)
     for scenario, result in results.items():
-        print(f"{scenario:<20} {result['status']:<6} ({result['duration_seconds']}s)")
-    
-    print(f"\nDetailed report generated at: {report_path}")
+        print(f"{scenario:20} {result}")
+    print("="*50)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nTest suite interrupted by user")
+        logger.info("Test execution interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
