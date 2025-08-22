@@ -19,24 +19,47 @@ import subprocess
 import time
 import signal
 
-# Global audit logger instance
+# Global audit logger instance and encryption key
 audit_logger = None
+encryption_key = None
 
 def get_audit_logger():
-    """Get or create the audit logger instance"""
-    global audit_logger
+    """Get or create the audit logger instance with consistent encryption key"""
+    global audit_logger, encryption_key
     if audit_logger is None:
-        audit_logger = AuditLogger(test_mode=True, test_name="mininet_iot")
+        # Use the same encryption key for all loggers
+        if encryption_key is None:
+            from compliance.audit_logger import AuditLogger as AuditLoggerClass
+            encryption_key = AuditLoggerClass.get_encryption_key()
+        
+        # Initialize logger with consistent test name and encryption key
+        test_name = os.environ.get('TEST_NAME', 'mininet_iot')
+        audit_logger = AuditLogger(
+            test_mode=True, 
+            test_name=test_name,
+            encryption_key=encryption_key
+        )
     return audit_logger
 
 def cleanup_network():
-    """Comprehensive network cleanup"""
+    """Comprehensive network cleanup with better process management"""
+    logger = get_audit_logger()
+    logger.log_event(
+        event_type="cleanup_start",
+        description="Starting network cleanup",
+        severity="info"
+    )
+    
     # First, try to stop any running Mininet instances gracefully
     try:
         from mininet.clean import cleanup
         cleanup()
-    except:
-        pass  # Ignore if mininet.clean is not available
+    except Exception as e:
+        logger.log_event(
+            event_type="cleanup_warning",
+            description=f"Mininet cleanup failed: {str(e)}",
+            severity="warning"
+        )
     
     # List of commands to clean up network state
     commands = [
@@ -44,7 +67,7 @@ def cleanup_network():
         'sudo mn -c >/dev/null 2>&1 || true',
         # Kill any remaining Python processes
         'sudo pkill -f "python.*mininet" || true',
-        'sudo pkill -f "python.*main.py" || true',
+        'sudo pkill -f "python.*main\.py" || true',
         # Clean up OVS
         'sudo ovs-vsctl del-br s1 2>/dev/null || true',
         'sudo ovs-vsctl del-manager 2>/dev/null || true',
@@ -71,18 +94,40 @@ def cleanup_network():
         'sleep 2'
     ]
     
-    # Execute each command with error handling
+    # Execute each command with error handling and logging
     for cmd in commands:
         try:
-            subprocess.run(cmd, shell=True, check=False)
+            result = subprocess.run(
+                cmd, 
+                shell=True, 
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if result.returncode != 0:
+                logger.log_event(
+                    event_type="cleanup_warning",
+                    description=f"Cleanup command failed: {cmd}",
+                    severity="warning",
+                    details={
+                        "returncode": result.returncode,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr
+                    }
+                )
         except Exception as e:
-            print(f"[!] Warning during cleanup: {e}", file=sys.stderr)
+            logger.log_event(
+                event_type="cleanup_error",
+                description=f"Error during cleanup: {str(e)}",
+                severity="error"
+            )
     
-    # Final check for any remaining processes
-    try:
-        subprocess.run('pgrep -fl "mininet|ovs" || true', shell=True)
-    except:
-        pass
+    logger.log_event(
+        event_type="cleanup_complete",
+        description="Network cleanup completed",
+        severity="info"
+    )
 
 def start_ovs_service():
     """Ensure Open vSwitch service is running"""
@@ -214,62 +259,91 @@ def run_test_scenario(net, scenario):
 
 def main(scenario=None):
     """Main function with enhanced testing capabilities"""
-    setLogLevel('info')
+    # Set up signal handlers for graceful shutdown
+    def signal_handler(sig, frame):
+        logger = get_audit_logger()
+        logger.log_event(
+            event_type="shutdown_signal",
+            description=f"Received signal {sig}, shutting down...",
+            severity="warning"
+        )
+        cleanup_network()
+        sys.exit(0)
     
-    # Ensure OVS service is running
-    if not start_ovs_service():
-        error("*** FATAL: Open vSwitch is required but could not be started.\n")
-        return 1
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
-    cleanup_network()
-    time.sleep(1)
+    # Initialize audit logging
+    logger = get_audit_logger()
     
     try:
-        info("*** Creating network\n")
-        net = Mininet(
-            topo=IoTTopo(),
-            controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6633),
-            switch=OVSSwitch,
-            link=TCLink,
-            autoSetMacs=True,
-            autoStaticArp=True,
-            waitConnected=True,
-            cleanup=True
+        # Log test start
+        logger.log_event(
+            event_type="test_start",
+            description=f"Starting test scenario: {scenario}",
+            severity="info"
         )
         
-        info("*** Starting network\n")
+        # Initialize network
+        start_ovs_service()
+        
+        # Create and start network
+        topo = IoTTopo()
+        net = Mininet(
+            topo=topo,
+            switch=OVSSwitch,
+            controller=RemoteController('c0', ip='127.0.0.1', port=6653),
+            link=TCLink,
+            autoSetMacs=True,
+            autoStaticArp=True
+        )
+        
+        # Start network
         net.start()
         
-        # Configure edge router as gateway
-        edge = net.get('edge')
-        edge.cmd('sysctl -w net.ipv4.ip_forward=1')
-        
-        # Set default routes for all devices
-        for host in net.hosts:
-            if host.name != 'edge':
-                host.cmd(f'ip route add default via 192.168.0.1')
-        
-        # Run specific scenario or enter CLI
-        if scenario:
-            run_test_scenario(net, scenario)
-        else:
-            info("\n=== Starting Mininet CLI (type 'exit' to quit) ===\n")
-            CLI(net)
-        
-        return 0
-        
-    except Exception as e:
-        error(f"*** Critical error: {str(e)}\n")
-        import traceback
-        traceback.print_exc()
-        return 1
-    finally:
         try:
-            info("*** Cleaning up\n")
+            # Run the test scenario
+            run_test_scenario(net, scenario)
+            
+            # Log successful completion
+            logger.log_event(
+                event_type="test_complete",
+                description=f"Successfully completed test scenario: {scenario}",
+                severity="info"
+            )
+            return 0
+            
+        except Exception as e:
+            # Log any errors during test execution
+            logger.log_event(
+                event_type="test_error",
+                description=f"Error during test execution: {str(e)}",
+                severity="error",
+                details={"exception": str(e), "type": type(e).__name__}
+            )
+            return 1
+            
+        finally:
+            # Always clean up the network
             net.stop()
-        except:
-            pass
+            cleanup_network()
+            
+    except Exception as e:
+        # Log any initialization errors
+        logger.log_event(
+            event_type="test_error",
+            description=f"Test initialization failed: {str(e)}",
+            severity="error",
+            details={"exception": str(e), "type": type(e).__name__}
+        )
         cleanup_network()
+        return 1
+    
+    finally:
+        # Ensure all logs are flushed
+        if 'logger' in locals():
+            logger.shutdown()
 
 if __name__ == '__main__':
     scenario = sys.argv[1] if len(sys.argv) > 1 else None
