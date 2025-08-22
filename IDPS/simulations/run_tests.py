@@ -13,6 +13,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+import traceback
 
 # Configure logging
 logging.basicConfig(
@@ -38,101 +39,109 @@ TEST_SCENARIOS = [
     'mixed_threats'
 ]
 
-def cleanup_between_scenarios():
-    """Ensure clean environment between test scenarios"""
-    logger.info("Cleaning up between scenarios...")
-    
-    try:
-        # Import cleanup function from mininet_iot
-        from mininet_iot import cleanup_network
-        cleanup_network()
-    except Exception as e:
-        logger.warning(f"Error during cleanup: {e}")
-    
-    # Additional cleanup commands
-    cleanup_cmds = [
-        'sudo pkill -f "python.*mininet" || true',
-        'sudo pkill -f "ovs-vswitchd" || true',
-        'sudo pkill -f "ovsdb-server" || true',
-        'sudo rm -rf /var/run/openvswitch/* || true',
-        'sudo service openvswitch-switch restart || true',
-        'sudo mn -c >/dev/null 2>&1 || true',
-    ]
-    
-    for cmd in cleanup_cmds:
-        try:
-            subprocess.run(cmd, shell=True, check=False)
-        except Exception as e:
-            logger.warning(f"Cleanup command failed: {cmd} - {e}")
-    
-    # Give the system a moment to stabilize
-    time.sleep(5)
-
-def run_scenario(scenario):
-    """Run a single test scenario and return execution status"""
-    logger.info(f"Starting scenario: {scenario}")
-    
-    # Clean up before starting the scenario
-    cleanup_between_scenarios()
-    
-    # Initialize audit logger for this test
+def get_audit_logger():
+    """Initialize audit logger"""
     from compliance.audit_logger import AuditLogger
-    audit_logger = AuditLogger(test_mode=True, test_name=scenario)
+    return AuditLogger(test_mode=True)
+
+def run_test_scenario(scenario_name, timeout_seconds=300):
+    """Run a single test scenario with timeout and proper cleanup"""
+    logger = get_audit_logger()
+    start_time = time.time()
+    test_passed = False
+    error_message = None
     
     try:
-        # Create log directory first
-        log_dir = os.path.join(BASE_DIR, 'results', f'{scenario}_logs')
-        os.makedirs(log_dir, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_file = os.path.join(log_dir, f'{scenario}_{timestamp}.log')
+        # Set test name for logging
+        os.environ['TEST_NAME'] = f"{scenario_name}_{int(start_time)}"
         
-        # Log test start
-        audit_logger.log_event(
-            event_type="test_start",
-            description=f"Starting test scenario: {scenario}",
+        logger.log_event(
+            event_type="test_started",
+            test_name=scenario_name,
+            description=f"Starting test scenario: {scenario_name}",
             severity="info"
         )
         
-        # Run the scenario with both stdout and stderr redirected
-        cmd = [
-            'sudo', 'python3', 
-            os.path.join('simulations', 'mininet_iot.py'),
-            scenario
-        ]
+        # Run the test in a separate process with timeout
+        cmd = [sys.executable, "mininet_iot.py", "--test", scenario_name]
         
-        with open(log_file, 'w') as f:
-            process = subprocess.Popen(
+        try:
+            result = subprocess.run(
                 cmd,
-                cwd=project_root,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1,
-                universal_newlines=True
+                timeout=timeout_seconds
             )
             
-            # Stream output to both console and log file
-            for line in process.stdout:
-                print(line, end='')
-                f.write(line)
-                f.flush()
+            # Check test results
+            if result.returncode == 0:
+                test_passed = True
+                logger.log_event(
+                    event_type="test_passed",
+                    test_name=scenario_name,
+                    description=f"Test scenario passed: {scenario_name}",
+                    severity="info",
+                    details={
+                        "stdout": result.stdout[-2000:],  # Last 2000 chars of output
+                        "execution_time": time.time() - start_time
+                    }
+                )
+            else:
+                error_message = f"Test failed with return code {result.returncode}"
+                logger.log_event(
+                    event_type="test_failed",
+                    test_name=scenario_name,
+                    description=f"Test scenario failed: {scenario_name}",
+                    severity="error",
+                    details={
+                        "return_code": result.returncode,
+                        "stdout": result.stdout[-2000:],
+                        "stderr": result.stderr[-2000:],
+                        "execution_time": time.time() - start_time
+                    }
+                )
                 
-            # Wait for process to complete
-            return_code = process.wait()
+        except subprocess.TimeoutExpired:
+            error_message = f"Test timed out after {timeout_seconds} seconds"
+            logger.log_event(
+                event_type="test_timeout",
+                test_name=scenario_name,
+                description=f"Test scenario timed out: {scenario_name}",
+                severity="error",
+                details={"timeout_seconds": timeout_seconds}
+            )
             
-        if return_code != 0:
-            logger.error(f"Scenario {scenario} failed with return code {return_code}")
-            return False
-            
-        return True
-        
     except Exception as e:
-        logger.error(f"Error running scenario {scenario}: {e}", exc_info=True)
-        return False
+        error_message = f"Unexpected error: {str(e)}"
+        logger.log_event(
+            event_type="test_error",
+            test_name=scenario_name,
+            description=f"Unexpected error in test scenario: {scenario_name}",
+            severity="critical",
+            details={"error": str(e), "traceback": traceback.format_exc()}
+        )
+        
     finally:
-        # Ensure audit logs are flushed
-        if 'audit_logger' in locals():
-            del audit_logger
+        # Ensure cleanup happens even if test fails
+        try:
+            from mininet_iot import cleanup_network
+            cleanup_network()
+        except Exception as e:
+            logger.log_event(
+                event_type="cleanup_error",
+                test_name=scenario_name,
+                description="Error during test cleanup",
+                severity="error",
+                details={"error": str(e)}
+            )
+    
+    return {
+        "name": scenario_name,
+        "passed": test_passed,
+        "error": error_message,
+        "duration": time.time() - start_time
+    }
 
 def generate_report(scenarios):
     """Generate a test report from all scenario results"""
@@ -171,6 +180,11 @@ def generate_report(scenarios):
         }
         
         try:
+            # Run the test scenario
+            result = run_test_scenario(scenario)
+            scenario_report['success'] = result['passed']
+            scenario_report['error'] = result['error']
+            
             # Analyze scenario results
             metrics = analyze_scenario(scenario)
             scenario_report['metrics'] = metrics
@@ -200,13 +214,11 @@ def generate_report(scenarios):
                             'error': str(e)
                         })
             
-            # Check if scenario was successful
-            if metrics.get('success', False):
+            # Update summary
+            if scenario_report['success']:
                 report['summary']['passed'] += 1
-                scenario_report['success'] = True
             else:
                 report['summary']['failed'] += 1
-                scenario_report['error'] = metrics.get('error', 'Unknown error')
                 
         except Exception as e:
             logger.error(f"Error generating report for {scenario}: {e}")
@@ -267,8 +279,8 @@ def main():
     # Run each scenario
     results = {}
     for scenario in scenarios_to_run:
-        success = run_scenario(scenario)
-        results[scenario] = 'PASSED' if success else 'FAILED'
+        result = run_test_scenario(scenario)
+        results[scenario] = result
     
     # Generate report
     try:
@@ -282,7 +294,7 @@ def main():
     print("TEST SUMMARY")
     print("="*50)
     for scenario, result in results.items():
-        print(f"{scenario:20} {result}")
+        print(f"{scenario:20} {result['passed']}")
     print("="*50)
 
 if __name__ == "__main__":

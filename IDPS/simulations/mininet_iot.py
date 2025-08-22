@@ -42,13 +42,38 @@ def get_audit_logger():
     return audit_logger
 
 def cleanup_network():
-    """Comprehensive network cleanup with better process management"""
+    """Comprehensive network cleanup with timeouts and better process management"""
     logger = get_audit_logger()
     logger.log_event(
         event_type="cleanup_start",
         description="Starting network cleanup",
         severity="info"
     )
+    
+    def run_command(cmd, timeout=10):
+        """Helper to run a command with timeout"""
+        try:
+            return subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            logger.log_event(
+                event_type="cleanup_warning",
+                description=f"Command timed out: {cmd}",
+                severity="warning"
+            )
+            return None
+        except Exception as e:
+            logger.log_event(
+                event_type="cleanup_error",
+                description=f"Error running command '{cmd}': {str(e)}",
+                severity="error"
+            )
+            return None
     
     # First, try to stop any running Mininet instances gracefully
     try:
@@ -61,67 +86,39 @@ def cleanup_network():
             severity="warning"
         )
     
-    # List of commands to clean up network state
+    # List of commands to clean up network state with timeouts
     commands = [
-        # Stop any running Mininet instances
-        'sudo mn -c >/dev/null 2>&1 || true',
-        # Kill any remaining Python processes
-        'sudo pkill -f "python.*mininet" || true',
-        r'sudo pkill -f "python.*main\.py" || true',
-        # Clean up OVS
-        'sudo ovs-vsctl del-br s1 2>/dev/null || true',
-        'sudo ovs-vsctl del-manager 2>/dev/null || true',
-        'sudo pkill -f "ovs-vswitchd" || true',
-        'sudo pkill -f "ovsdb-server" || true',
-        # Clean up network namespaces
-        'sudo ip -all netns delete 2>/dev/null || true',
-        # Clean up any remaining interfaces
-        'sudo ip link del s1-eth1 2>/dev/null || true',
-        'sudo ip link del s1-eth2 2>/dev/null || true',
-        'sudo ip link del edge_router-eth0 2>/dev/null || true',
-        'sudo ip link del therm-eth0 2>/dev/null || true',
-        'sudo ip link del cam-eth0 2>/dev/null || true',
-        'sudo ip link del lock-eth0 2>/dev/null || true',
-        'sudo ip link del health-eth0 2>/dev/null || true',
-        'sudo ip link del malicious-eth0 2>/dev/null || true',
-        # Clean up OVS data
-        'sudo rm -rf /var/run/openvswitch/* 2>/dev/null || true',
-        'sudo rm -f /tmp/*.out /tmp/*.log 2>/dev/null || true',
-        # Restart OVS
-        'sudo systemctl restart openvswitch-switch 2>/dev/null || \
-         sudo service openvswitch-switch restart 2>/dev/null || true',
-        # Give OVS time to restart
-        'sleep 2'
+        # Stop any running Mininet instances (5s timeout)
+        ('sudo mn -c >/dev/null 2>&1 || true', 5),
+        # Kill any remaining Python processes (5s timeout)
+        ('sudo pkill -f "python.*mininet" || true', 5),
+        (r'sudo pkill -f "python.*main\.py" || true', 5),
+        # Clean up OVS (5s timeout)
+        ('sudo ovs-vsctl del-br s1 2>/dev/null || true', 5),
+        ('sudo ovs-vsctl del-manager 2>/dev/null || true', 5),
+        ('sudo pkill -f "ovs-vswitchd" || true', 5),
+        ('sudo pkill -f "ovsdb-server" || true', 5),
+        # Clean up network namespaces (5s timeout)
+        ('sudo ip -all netns delete 2>/dev/null || true', 5),
+        # Clean up any remaining interfaces (5s timeout)
+        ('sudo ip link del s1-eth1 2>/dev/null || true', 5),
+        ('sudo ip link del s1-eth2 2>/dev/null || true', 5),
+        ('sudo ip link del edge_router-eth0 2>/dev/null || true', 5),
+        ('sudo ip link del therm-eth0 2>/dev/null || true', 5),
+        ('sudo ip link del cam-eth0 2>/dev/null || true', 5),
+        ('sudo ip link del lock-eth0 2>/dev/null || true', 5),
+        ('sudo ip link del health-eth0 2>/dev/null || true', 5),
+        ('sudo ip link del malicious-eth0 2>/dev/null || true', 5),
+        # Clean up OVS data (5s timeout)
+        ('sudo rm -rf /var/run/openvswitch/* 2>/dev/null || true', 5),
+        # Final cleanup (10s timeout)
+        ('sudo fuser -k 6633/tcp 2>/dev/null || true', 10),
+        ('sudo fuser -k 6653/tcp 2>/dev/null || true', 10),
     ]
     
-    # Execute each command with error handling and logging
-    for cmd in commands:
-        try:
-            result = subprocess.run(
-                cmd, 
-                shell=True, 
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            if result.returncode != 0:
-                logger.log_event(
-                    event_type="cleanup_warning",
-                    description=f"Cleanup command failed: {cmd}",
-                    severity="warning",
-                    details={
-                        "returncode": result.returncode,
-                        "stdout": result.stdout,
-                        "stderr": result.stderr
-                    }
-                )
-        except Exception as e:
-            logger.log_event(
-                event_type="cleanup_error",
-                description=f"Error during cleanup: {str(e)}",
-                severity="error"
-            )
+    # Execute each command with its specified timeout
+    for cmd, timeout in commands:
+        run_command(cmd, timeout)
     
     logger.log_event(
         event_type="cleanup_complete",
