@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import sys
 import os
-from compliance.audit_logger import AuditLogger
 
-# Add project root to Python path
+# Add project root to Python path before any other imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
+# Now import other modules
+from compliance.audit_logger import AuditLogger
 from config import BASE_DIR
 from mininet.topo import Topo
 from mininet.net import Mininet
@@ -18,7 +19,15 @@ import subprocess
 import time
 import signal
 
+# Global audit logger instance
 audit_logger = None
+
+def get_audit_logger():
+    """Get or create the audit logger instance"""
+    global audit_logger
+    if audit_logger is None:
+        audit_logger = AuditLogger(test_mode=True, test_name="mininet_iot")
+    return audit_logger
 
 def cleanup_network():
     """Comprehensive network cleanup"""
@@ -110,11 +119,7 @@ def run_attack(host, attack_type):
 
 def run_test_scenario(net, scenario):
     """Run predefined test scenario with audit logging"""
-    global audit_logger
-    
-    # Initialize audit logger if not already done
-    if audit_logger is None:
-        audit_logger = AuditLogger(test_mode=True, test_name=scenario)
+    audit_logger = get_audit_logger()
     
     info(f"=== Starting scenario: {scenario} ===\n")
     
@@ -176,8 +181,7 @@ def run_test_scenario(net, scenario):
         raise
     finally:
         # Ensure all logs are written
-        if audit_logger:
-            audit_logger.shutdown()
+        audit_logger.shutdown()
 
 def main(scenario=None):
     """Main function with enhanced testing capabilities"""
