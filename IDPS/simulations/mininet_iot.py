@@ -370,26 +370,4 @@ def main(scenario=None):
 
 if __name__ == '__main__':
     scenario = sys.argv[1] if len(sys.argv) > 1 else None
-    sys.exit(main(scenario))            # Always clean up the network
-            net.stop()
-            cleanup_network()
-            
-    except Exception as e:
-        # Log any initialization errors
-        logger.log_event(
-            event_type="test_error",
-            description=f"Test initialization failed: {str(e)}",
-            severity="error",
-            details={"exception": str(e), "type": type(e).__name__}
-        )
-        cleanup_network()
-        return 1
-    
-    finally:
-        # Ensure all logs are flushed
-        if 'logger' in locals():
-            logger.shutdown()
-
-if __name__ == '__main__':
-    scenario = sys.argv[1] if len(sys.argv) > 1 else None
     sys.exit(main(scenario))
