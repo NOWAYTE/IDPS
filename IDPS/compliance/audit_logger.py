@@ -17,7 +17,27 @@ except ImportError:
     GDPR_COMPLIANCE = False
 
 class AuditLogger:
-    def __init__(self, test_mode=False, test_name=None):
+    # Class-level encryption key storage
+    _encryption_key = None
+    _key_lock = threading.Lock()
+    
+    @classmethod
+    def get_encryption_key(cls):
+        """Get the current encryption key, generate one if it doesn't exist"""
+        with cls._key_lock:
+            if cls._encryption_key is None:
+                cls._encryption_key = os.urandom(32)
+            return cls._encryption_key
+            
+    @classmethod
+    def set_encryption_key(cls, key):
+        """Set the encryption key to a specific value"""
+        if not isinstance(key, bytes) or len(key) != 32:
+            raise ValueError("Encryption key must be 32 bytes")
+        with cls._key_lock:
+            cls._encryption_key = key
+    
+    def __init__(self, test_mode=False, test_name=None, encryption_key=None):
         self.test_mode = test_mode
         self.test_name = test_name
         self.current_log_date = datetime.utcnow().date()
@@ -33,8 +53,11 @@ class AuditLogger:
             
         os.makedirs(self.log_dir, exist_ok=True)
         
-        # Generate encryption key (in production, use secure key management)
-        self.encryption_key = self._generate_encryption_key()
+        # Set encryption key - use provided key, class key, or generate new one
+        if encryption_key is not None:
+            self.encryption_key = encryption_key
+        else:
+            self.encryption_key = self.get_encryption_key()
         
         # Initialize current log file
         self.log_file = self._get_log_file_path()
@@ -47,7 +70,7 @@ class AuditLogger:
     
     def _generate_encryption_key(self):
         """Generate a secure encryption key (AES-256)"""
-        return os.urandom(32)
+        return self.get_encryption_key()
     
     def _get_log_file_path(self):
         """Get path for current log file based on date and test mode"""
