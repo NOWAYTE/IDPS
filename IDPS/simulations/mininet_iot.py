@@ -97,8 +97,8 @@ def cleanup_network():
         # Clean up OVS (5s timeout)
         ('sudo ovs-vsctl del-br s1 2>/dev/null || true', 5),
         ('sudo ovs-vsctl del-manager 2>/dev/null || true', 5),
-        ('sudo pkill -f "ovs-vswitchd" || true', 5),
-        ('sudo pkill -f "ovsdb-server" || true', 5),
+        # ('sudo pkill -f "ovs-vswitchd" || true', 5),
+        # ('sudo pkill -f "ovsdb-server" || true', 5),
         # Clean up network namespaces (5s timeout)
         ('sudo ip -all netns delete 2>/dev/null || true', 5),
         # Clean up any remaining interfaces (5s timeout)
@@ -111,7 +111,7 @@ def cleanup_network():
         ('sudo ip link del health-eth0 2>/dev/null || true', 5),
         ('sudo ip link del malicious-eth0 2>/dev/null || true', 5),
         # Clean up OVS data (5s timeout)
-        ('sudo rm -rf /var/run/openvswitch/* 2>/dev/null || true', 5),
+        # ('sudo rm -rf /var/run/openvswitch/* 2>/dev/null || true', 5),
         # Final cleanup (10s timeout)
         ('sudo fuser -k 6633/tcp 2>/dev/null || true', 10),
         ('sudo fuser -k 6653/tcp 2>/dev/null || true', 10),
