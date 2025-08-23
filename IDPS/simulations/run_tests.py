@@ -50,16 +50,20 @@ def run_test_scenario(scenario_name, timeout_seconds=300):
     start_time = time.time()
     test_passed = False
     error_message = None
+    test_run_id = f"{scenario_name}_{int(start_time)}"
     
     try:
         # Set test name for logging
-        os.environ['TEST_NAME'] = f"{scenario_name}_{int(start_time)}"
+        os.environ['TEST_NAME'] = test_run_id
         
         logger.log_event(
             event_type="test_started",
-            test_name=scenario_name,
             description=f"Starting test scenario: {scenario_name}",
-            severity="info"
+            severity="info",
+            details={
+                "test_name": scenario_name,
+                "test_run_id": test_run_id
+            }
         )
         
         # Run the test in a separate process with timeout
@@ -79,10 +83,11 @@ def run_test_scenario(scenario_name, timeout_seconds=300):
                 test_passed = True
                 logger.log_event(
                     event_type="test_passed",
-                    test_name=scenario_name,
                     description=f"Test scenario passed: {scenario_name}",
                     severity="info",
                     details={
+                        "test_name": scenario_name,
+                        "test_run_id": test_run_id,
                         "stdout": result.stdout[-2000:],  # Last 2000 chars of output
                         "execution_time": time.time() - start_time
                     }
@@ -91,10 +96,11 @@ def run_test_scenario(scenario_name, timeout_seconds=300):
                 error_message = f"Test failed with return code {result.returncode}"
                 logger.log_event(
                     event_type="test_failed",
-                    test_name=scenario_name,
                     description=f"Test scenario failed: {scenario_name}",
                     severity="error",
                     details={
+                        "test_name": scenario_name,
+                        "test_run_id": test_run_id,
                         "return_code": result.returncode,
                         "stdout": result.stdout[-2000:],
                         "stderr": result.stderr[-2000:],
@@ -106,20 +112,27 @@ def run_test_scenario(scenario_name, timeout_seconds=300):
             error_message = f"Test timed out after {timeout_seconds} seconds"
             logger.log_event(
                 event_type="test_timeout",
-                test_name=scenario_name,
                 description=f"Test scenario timed out: {scenario_name}",
                 severity="error",
-                details={"timeout_seconds": timeout_seconds}
+                details={
+                    "test_name": scenario_name,
+                    "test_run_id": test_run_id,
+                    "timeout_seconds": timeout_seconds
+                }
             )
             
     except Exception as e:
         error_message = f"Unexpected error: {str(e)}"
         logger.log_event(
             event_type="test_error",
-            test_name=scenario_name,
             description=f"Unexpected error in test scenario: {scenario_name}",
             severity="critical",
-            details={"error": str(e), "traceback": traceback.format_exc()}
+            details={
+                "test_name": scenario_name,
+                "test_run_id": test_run_id,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
         )
         
     finally:
@@ -130,10 +143,13 @@ def run_test_scenario(scenario_name, timeout_seconds=300):
         except Exception as e:
             logger.log_event(
                 event_type="cleanup_error",
-                test_name=scenario_name,
                 description="Error during test cleanup",
                 severity="error",
-                details={"error": str(e)}
+                details={
+                    "test_name": scenario_name,
+                    "test_run_id": test_run_id,
+                    "error": str(e)
+                }
             )
     
     return {
