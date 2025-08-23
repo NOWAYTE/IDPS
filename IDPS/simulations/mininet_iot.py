@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import os
+import traceback
 
 # Add project root to Python path before any other imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -127,32 +128,53 @@ def cleanup_network():
     )
 
 def start_ovs_service():
-    """Ensure Open vSwitch service is running"""
+    """Ensure Open vSwitch service is running with proper verification"""
     logger = get_audit_logger()
+    
+    def is_ovs_running():
+        """Check if OVS is running and responsive"""
+        try:
+            result = subprocess.run(
+                ['ovs-vsctl', 'show'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    
+    # Check if OVS is already running
+    if is_ovs_running():
+        logger.log_event(
+            event_type="ovs_info",
+            description="OVS is already running",
+            severity="info"
+        )
+        return True
     
     # Ensure OVS database directory exists with correct permissions
     ovs_db_dir = '/var/run/openvswitch'
     os.makedirs(ovs_db_dir, exist_ok=True)
-    subprocess.run(['sudo', 'chmod', '755', '/var/run/openvswitch'], check=True)
-    
-    # Check if OVS is already running
-    try:
-        subprocess.run(['ovs-vsctl', 'show'], 
-                      stdout=subprocess.PIPE, 
-                      stderr=subprocess.PIPE, 
-                      check=True)
-        return True
-    except subprocess.CalledProcessError:
-        pass  # OVS is not running, continue with startup
+    subprocess.run(['sudo', 'chmod', '755', ovs_db_dir], check=False)
+    subprocess.run(['sudo', 'chown', '-R', 'openvswitch:openvswitch', ovs_db_dir], check=False)
     
     try:
         # Stop any running OVS processes
-        subprocess.run(['sudo', 'pkill', '-f', 'ovsdb-server'], 
-                      stdout=subprocess.PIPE, 
-                      stderr=subprocess.PIPE)
-        subprocess.run(['sudo', 'pkill', '-f', 'ovs-vswitchd'], 
-                      stdout=subprocess.PIPE, 
-                      stderr=subprocess.PIPE)
+        logger.log_event(
+            event_type="ovs_cleanup",
+            description="Stopping any existing OVS processes",
+            severity="info"
+        )
+        
+        for proc in ['ovsdb-server', 'ovs-vswitchd']:
+            subprocess.run(['sudo', 'pkill', '-f', proc], 
+                         stdout=subprocess.PIPE, 
+                         stderr=subprocess.PIPE)
+        
+        # Give processes time to terminate
+        time.sleep(2)
         
         # Initialize OVS database if it doesn't exist
         db_file = '/etc/openvswitch/conf.db'
@@ -160,39 +182,74 @@ def start_ovs_service():
             os.makedirs(os.path.dirname(db_file), exist_ok=True)
             subprocess.run(['sudo', 'ovsdb-tool', 'create', db_file], check=True)
         
+        # Set proper permissions on database file
+        subprocess.run(['sudo', 'chown', 'openvswitch:openvswitch', db_file], check=False)
+        
         # Start OVS database server
-        subprocess.Popen(
+        logger.log_event(
+            event_type="ovs_start",
+            description="Starting OVS database server",
+            severity="info"
+        )
+        
+        db_server = subprocess.Popen(
             ['sudo', 'ovsdb-server', 
              '--remote=punix:/var/run/openvswitch/db.sock',
              '--remote=db:Open_vSwitch,Open_vSwitch,manager_options',
-             '--pidfile', '--detach'],
+             '--pidfile', '--detach', '--log-file'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
         
-        # Initialize OVS database
-        time.sleep(1)  # Give the server a moment to start
+        # Wait for database server to be ready
+        time.sleep(2)
+        
+        # Initialize OVS database if needed
+        logger.log_event(
+            event_type="ovs_init",
+            description="Initializing OVS database",
+            severity="info"
+        )
+        
         subprocess.run(['sudo', 'ovs-vsctl', '--no-wait', 'init'], check=True)
         
         # Start OVS vswitch daemon
-        subprocess.Popen(
-            ['sudo', 'ovs-vswitchd', '--pidfile', '--detach'],
+        logger.log_event(
+            event_type="ovs_start",
+            description="Starting OVS vswitch daemon",
+            severity="info"
+        )
+        
+        vswitchd = subprocess.Popen(
+            ['sudo', 'ovs-vswitchd', '--pidfile', '--detach', '--log-file'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
         
-        # Wait for OVS to be ready
-        time.sleep(2)
+        # Wait for OVS to be ready with timeout
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            if is_ovs_running():
+                logger.log_event(
+                    event_type="ovs_ready",
+                    description="OVS is ready",
+                    severity="info"
+                )
+                return True
+            time.sleep(1)
         
-        # Verify OVS is running
-        subprocess.run(['ovs-vsctl', 'show'], check=True)
-        return True
+        # If we get here, OVS didn't start properly
+        raise RuntimeError("Failed to start OVS: timeout waiting for service to become ready")
         
     except Exception as e:
         logger.log_event(
             event_type="ovs_error",
             description=f"Failed to start OVS: {str(e)}",
-            severity="error"
+            severity="error",
+            details={
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
         )
         return False
 
