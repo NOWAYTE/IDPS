@@ -113,8 +113,8 @@ def cleanup_network():
         # Clean up OVS data (5s timeout)
         # ('sudo rm -rf /var/run/openvswitch/* 2>/dev/null || true', 5),
         # Final cleanup (10s timeout)
-        ('sudo fuser -k 6633/tcp 2>/dev/null || true', 10),
-        ('sudo fuser -k 6653/tcp 2>/dev/null || true', 10),
+        # ('sudo fuser -k 6633/tcp 2>/dev/null || true', 10),
+        # ('sudo fuser -k 6653/tcp 2>/dev/null || true', 10),
     ]
     
     # Execute each command with its specified timeout
