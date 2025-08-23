@@ -137,6 +137,84 @@ def is_ovs_installed():
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+def wait_for_ovs(timeout=15):
+    """Wait until OVS responds to ovs-vsctl show"""
+    for _ in range(timeout):
+        try:
+            result = subprocess.run(
+                ['ovs-vsctl', 'show'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
+
+
+def start_ovs_service():
+    """Ensure Open vSwitch service is running with proper verification"""
+    logger = get_audit_logger()
+    
+    # Check if OVS is installed
+    if not is_ovs_installed():
+        error_msg = "Open vSwitch is not installed. Please install it with: sudo apt-get install openvswitch-switch"
+        logger.log_event(
+            event_type="ovs_error",
+            description=error_msg,
+            severity="error"
+        )
+        raise RuntimeError(error_msg)
+
+    # Check if already running
+    if wait_for_ovs(3):
+        logger.log_event(
+            event_type="ovs_info",
+            description="OVS is already running",
+            severity="info"
+        )
+        return True
+
+    # Try systemd startup
+    try:
+        logger.log_event(
+            event_type="ovs_start",
+            description="Starting OVS service using systemd",
+            severity="info"
+        )
+        subprocess.run(
+            ['sudo', 'systemctl', 'start', 'openvswitch-switch'],
+            check=True,
+            timeout=30
+        )
+    except subprocess.CalledProcessError:
+        # fallback: manual startup (your existing logic)
+        logger.log_event(
+            event_type="ovs_fallback",
+            description="Systemd start failed, trying manual startup",
+            severity="warning"
+        )
+        # ... keep your manual startup code here ...
+
+    # Final wait loop (ensures readiness before returning)
+    if not wait_for_ovs(15):
+        error_msg = "OVS did not become ready in time"
+        logger.log_event(
+            event_type="ovs_error",
+            description=error_msg,
+            severity="critical"
+        )
+        raise RuntimeError(error_msg)
+
+    logger.log_event(
+        event_type="ovs_ready",
+        description="OVS is ready for use",
+        severity="info"
+    )
+    return True
 
 def start_ovs_service():
     """Ensure Open vSwitch service is running with proper verification"""
