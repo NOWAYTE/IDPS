@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import sys
 import os
+import json
+from datetime import datetime
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +26,7 @@ def cleanup_network():
         'sudo pkill -f "python3.*main.py"',
         'sudo pkill -f "ovs-vswitchd"',
         'sudo pkill -f "ovsdb-server"',
+        'sudo pkill -f "tcpdump"',
         'sudo rm -rf /var/run/openvswitch/*',
         'sudo rm -rf /tmp/*.out /tmp/*.log',
         'sudo ip link del s1-eth1 >/dev/null 2>&1 || true',
@@ -105,25 +108,90 @@ def run_attack(host, attack_type):
         host.cmd('python simulations/attack_generators.py --attack mqtt &')
     info(f"Started {attack_type} attack from {host.name}\n")
 
+def capture_traffic(scenario, duration):
+    """Capture network traffic during the scenario"""
+    # Ensure pcap directory exists
+    pcap_dir = os.path.join(BASE_DIR, 'pcaps')
+    os.makedirs(pcap_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    pcap_file = os.path.join(pcap_dir, f'{scenario}_{timestamp}.pcap')
+    
+    # Start tcpdump to capture traffic
+    cmd = f"sudo tcpdump -i any -w {pcap_file} -s 0 &"
+    tcpdump_process = subprocess.Popen(cmd, shell=True)
+    
+    info(f"*** Started traffic capture: {pcap_file}\n")
+    
+    # Let it run for the scenario duration
+    time.sleep(duration)
+    
+    # Stop tcpdump
+    subprocess.run("sudo pkill -f tcpdump", shell=True)
+    tcpdump_process.wait()
+    
+    info(f"*** Stopped traffic capture: {pcap_file}\n")
+    return pcap_file
+
+def run_idps_model(pcap_file, scenario):
+    """Run the IDPS model on captured traffic"""
+    model_script = os.path.join(BASE_DIR, 'models', 'run_model.py')
+    
+    if not os.path.exists(model_script):
+        error("*** IDPS model script not found!\n")
+        return False
+    
+    try:
+        # Ensure results directory exists
+        results_dir = os.path.join(BASE_DIR, 'results')
+        os.makedirs(results_dir, exist_ok=True)
+        
+        cmd = [
+            "python3", model_script,
+            "--pcap", pcap_file,
+            "--scenario", scenario,
+            "--output", os.path.join(results_dir, f'{scenario}_detections.json')
+        ]
+        
+        info(f"*** Running IDPS model: {' '.join(cmd)}\n")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode != 0:
+            error(f"*** Model execution failed: {result.stderr}\n")
+            return False
+            
+        info("*** IDPS model executed successfully\n")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        error("*** Model execution timed out\n")
+        return False
+    except Exception as e:
+        error(f"*** Error running model: {str(e)}\n")
+        return False
+
 def run_test_scenario(net, scenario):
-    """Run predefined test scenario"""
+    """Run predefined test scenario with full pipeline"""
     from test_scenarios import SCENARIOS
     
     if scenario not in SCENARIOS:
-        error(f"Unknown scenario: {scenario}\n")
+        error(f"*** Unknown scenario: {scenario}\n")
         return False
     
     test = SCENARIOS[scenario]
     info(f"=== Starting scenario: {test['name']} ===\n")
     
     try:
+        # Start traffic capture
+        pcap_file = capture_traffic(scenario, test['duration'])
+        
         # Start attacks
         for attack in test['attacks']:
             try:
                 device = net.get(attack['device'].split('_')[0])  # Convert 'malicious_device' to 'malicious'
                 run_attack(device, attack['type'])
             except Exception as e:
-                error(f"Failed to start attack {attack['type']}: {e}\n")
+                error(f"*** Failed to start attack {attack['type']}: {e}\n")
         
         # Start benign traffic
         for traffic in test['benign_traffic']:
@@ -131,18 +199,26 @@ def run_test_scenario(net, scenario):
                 device = net.get(traffic['device'].split('_')[0])
                 device.cmd(f'python simulations/attack_generators.py --traffic {traffic["type"]} &')
             except Exception as e:
-                error(f"Failed to start traffic {traffic['type']}: {e}\n")
+                error(f"*** Failed to start traffic {traffic['type']}: {e}\n")
         
         # Run for scenario duration
         info(f"\n=== Running scenario for {test['duration']} seconds ===\n")
         time.sleep(test['duration'])
-        return True
+        
+        # Run IDPS model on captured traffic
+        info("=== Running IDPS model analysis ===\n")
+        model_success = run_idps_model(pcap_file, scenario)
+        
+        if not model_success:
+            error("*** IDPS model analysis failed\n")
+        
+        return model_success
         
     except KeyboardInterrupt:
         info("\n=== Scenario interrupted by user ===\n")
         return True
     except Exception as e:
-        error(f"Error in scenario: {e}\n")
+        error(f"*** Error in scenario: {e}\n")
         return False
 
 def main(scenario=None):
@@ -184,7 +260,10 @@ def main(scenario=None):
         
         # Run specific scenario or enter CLI
         if scenario:
-            run_test_scenario(net, scenario)
+            success = run_test_scenario(net, scenario)
+            if not success:
+                error("*** Scenario execution failed!\n")
+                return 1
         else:
             info("\n=== Starting Mininet CLI (type 'exit' to quit) ===\n")
             CLI(net)
