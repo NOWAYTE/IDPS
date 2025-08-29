@@ -1,0 +1,2 @@
+{"timestamp": "2025-08-27T23:06:20.758707", "type": "ddos", "confidence": 0.98, "source_ip": "10.0.0.5", "target_ip": "10.0.0.1", "details": {"packet_rate": 1000, "protocol": "tcp", "port": 80}}
+{"timestamp": "2025-08-27T23:07:08.469963", "type": "ddos", "confidence": 0.98, "source_ip": "10.0.0.5", "target_ip": "10.0.0.1", "details": {"packet_rate": 1000, "protocol": "tcp", "port": 80}}

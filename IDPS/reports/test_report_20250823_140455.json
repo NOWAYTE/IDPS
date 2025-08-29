@@ -1,0 +1,61 @@
+{
+  "timestamp": "2025-08-23T14:04:35.728819",
+  "scenarios": {
+    "baseline": {
+      "success": false,
+      "error": "Test failed with return code 2",
+      "metrics": null,
+      "audit": {
+        "status": "no_logs_found",
+        "entries": 0,
+        "error": null
+      }
+    },
+    "ddos_attack": {
+      "success": false,
+      "error": "Test failed with return code 2",
+      "metrics": null,
+      "audit": {
+        "status": "no_logs_found",
+        "entries": 0,
+        "error": null
+      }
+    },
+    "reconnaissance": {
+      "success": false,
+      "error": "Test failed with return code 2",
+      "metrics": null,
+      "audit": {
+        "status": "no_logs_found",
+        "entries": 0,
+        "error": null
+      }
+    },
+    "iot_exploit": {
+      "success": false,
+      "error": "Test failed with return code 2",
+      "metrics": null,
+      "audit": {
+        "status": "no_logs_found",
+        "entries": 0,
+        "error": null
+      }
+    },
+    "mixed_threats": {
+      "success": false,
+      "error": "Test failed with return code 2",
+      "metrics": null,
+      "audit": {
+        "status": "no_logs_found",
+        "entries": 0,
+        "error": null
+      }
+    }
+  },
+  "summary": {
+    "total": 5,
+    "passed": 0,
+    "failed": 5,
+    "success_rate": 0.0
+  }
+}
