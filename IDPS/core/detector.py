@@ -30,12 +30,12 @@ class HybridDetector:
                 details={
                     "signature_id": sig_id,
                     "protocol": packet.sprintf("%IP.proto%"),
-                    "count": self.signature_counters[sig_id]  # Include current count
+                    "count": self.signature_counters[sig_id] 
                 }
             )
-            return "signature", 1.0, sig_id  # Include sig_id in return
+            return "signature", 1.0, sig_id 
 
-        # ML-based anomaly detection
+       
         anomaly, confidence = self.anomaly_detector.detect(packet)
         if anomaly:
             self.audit_logger.log_event(

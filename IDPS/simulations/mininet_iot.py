@@ -579,3 +579,15 @@ def main(scenario=None):
 if __name__ == '__main__':
     scenario = sys.argv[1] if len(sys.argv) > 1 else None
     sys.exit(main(scenario))
+
+
+model = RandomForestClassifier(
+    n_estimators=30,    
+    max_depth=5,        
+    min_samples_split=10,
+    max_features='sqrt',
+    class_weight='balanced',
+    random_state=42,
+    n_jobs=-1
+)
+model.fit(X_train, y_train)
