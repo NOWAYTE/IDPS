@@ -13,6 +13,10 @@ scapy>=2.5.0
 # Network Simulation (Optional)
 mininet>=2.3.0,<3.0.0      # Network emulation (for simulations)
 
+# Analysis dependencies
+pyshark==0.6.7
+numpy>=1.21.0
+
 # Development Dependencies
 pytest>=6.2.5,<7.0.0      # Testing framework
 pytest-cov>=2.12.0,<3.0.0  # Test coverage
