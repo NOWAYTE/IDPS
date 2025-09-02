@@ -135,39 +135,42 @@ def capture_traffic(scenario, duration):
 
 def run_idps_model(pcap_file, scenario):
     """Run the IDPS model on captured traffic"""
-    model_script = os.path.join(BASE_DIR, 'models', 'run_model.py')
-    
-    if not os.path.exists(model_script):
-        error("*** IDPS model script not found!\n")
-        return False
-    
     try:
-        # Ensure results directory exists
+        # Import the analyzer here to avoid circular imports
+        from analysis.analyze_pcap import PCAPAnalyzer, save_results
+        
+        # Create output directory if it doesn't exist
         results_dir = os.path.join(BASE_DIR, 'results')
         os.makedirs(results_dir, exist_ok=True)
         
-        cmd = [
-            "python3", model_script,
-            "--pcap", pcap_file,
-            "--scenario", scenario,
-            "--output", os.path.join(results_dir, f'{scenario}_detections.json')
-        ]
+        # Generate output filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_file = os.path.join(results_dir, f'analysis_{scenario}_{timestamp}.json')
         
-        info(f"*** Running IDPS model: {' '.join(cmd)}\n")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        # Initialize and run the analyzer
+        analyzer = PCAPAnalyzer()
+        results = analyzer.analyze_pcap(pcap_file, scenario)
         
-        if result.returncode != 0:
-            error(f"*** Model execution failed: {result.stderr}\n")
+        # Save results
+        if save_results(results, output_file):
+            info(f"*** IDPS analysis completed successfully. Results saved to {output_file}\n")
+            
+            # Check if any threats were detected
+            if results.get('threats_detected', False):
+                info("*** WARNING: Potential security threats detected!\n")
+                for anomaly in results.get('analysis', {}).get('anomalies', []):
+                    info(f"*** {anomaly.get('type', 'Unknown')}: {anomaly.get('description', 'No description')}\n")
+            
+            return True
+        else:
+            error("*** Failed to save IDPS analysis results\n")
             return False
             
-        info("*** IDPS model executed successfully\n")
-        return True
-        
-    except subprocess.TimeoutExpired:
-        error("*** Model execution timed out\n")
+    except ImportError as e:
+        error(f"*** Failed to import analysis module: {e}\n")
         return False
     except Exception as e:
-        error(f"*** Error running model: {str(e)}\n")
+        error(f"*** Error running IDPS model: {e}\n")
         return False
 
 def run_test_scenario(net, scenario):
