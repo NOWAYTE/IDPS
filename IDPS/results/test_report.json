@@ -1,4 +1,25 @@
 {
-  "timestamp": "2025-08-28T06:32:53.044688",
-  "scenarios": {}
+  "timestamp": "2025-09-02T19:48:27.419189",
+  "scenarios": {
+    "baseline": {
+      "status": "ANALYSIS_FAILED",
+      "error": "IDPS analysis failed for this scenario"
+    },
+    "ddos_attack": {
+      "status": "ANALYSIS_FAILED",
+      "error": "IDPS analysis failed for this scenario"
+    },
+    "reconnaissance": {
+      "status": "ANALYSIS_FAILED",
+      "error": "IDPS analysis failed for this scenario"
+    },
+    "iot_exploit": {
+      "status": "ANALYSIS_FAILED",
+      "error": "IDPS analysis failed for this scenario"
+    },
+    "mixed_threats": {
+      "status": "ANALYSIS_FAILED",
+      "error": "IDPS analysis failed for this scenario"
+    }
+  }
 }
